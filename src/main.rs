@@ -2,16 +2,14 @@ use std::error::Error;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
+use generate_put_pbt::parse_tests;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let input_directory = Path::new(".");
     let mut rust_files = Vec::new();
 
     source_files(input_directory, &mut rust_files)?;
-
-    for file in rust_files {
-        println!("{:?}", file);
-    }
+    parse_tests(&rust_files)?;
 
     Ok(())
 }
