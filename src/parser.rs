@@ -1,7 +1,8 @@
 use std::error::Error;
 use std::fs;
 use std::path::Path;
-use syn::{parse_file, Item};
+use syn::{parse_file, Attribute, Item};
+use syn::__private::ToTokens;
 
 pub fn parse_source_file(file: &Path) -> Result<Vec<String>, Box<dyn Error>> {
     let mut test_names = Vec::new();
@@ -24,14 +25,15 @@ fn test_methods(items: &[Item], method_names: &mut Vec<String>) {
 
                 test_methods(&submodule_items, method_names);
             }
-            Item::Fn(function) => {
-                method_names.push(format!("{:?}", &function.attrs))
+            Item::Fn(function) if has_test_attribute(&function.attrs) => {
+                method_names.push(format!("{}", &function.sig.ident));
+                method_names.push(format!("{}", function.to_token_stream()));
             }
             _ => {}
         }
     }
 }
 
-// fn has_test_attribute(attributes: &[Attribute]) -> bool {
-//     attributes.iter().map(|x| x.)
-// }
+fn has_test_attribute(attributes: &[Attribute]) -> bool {
+    attributes.iter().any(|x| x.meta.path().is_ident("test"))
+}

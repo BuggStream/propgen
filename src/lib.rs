@@ -25,7 +25,7 @@ pub mod test {
 
     #[test]
     fn double_one() {
-        let y = double(1);
-        assert_eq!(y, 2);
+        let doubled = double(1);
+        assert_eq!(doubled, 2);
     }
 }
