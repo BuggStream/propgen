@@ -1,12 +1,12 @@
-use generate_put_pbt::source_file_tests;
+use propgen::source_file_tests;
 use ra_ap_hir::{Crate, EditionedFileId, Semantics};
 use ra_ap_ide::AnalysisHost;
+use ra_ap_ide_db::base_db::SourceDatabase;
 use ra_ap_load_cargo::{LoadCargoConfig, ProcMacroServerChoice, load_workspace};
 use ra_ap_paths::{AbsPathBuf, Utf8PathBuf};
 use ra_ap_project_model::{CargoConfig, ProjectManifest, ProjectWorkspace, RustLibSource};
 use std::error::Error;
 use std::str::FromStr;
-use ra_ap_ide_db::base_db::SourceDatabase;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let cargo_config = CargoConfig {

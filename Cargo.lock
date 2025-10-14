@@ -326,20 +326,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7ab85b9b05e3978cc9a9cf8fea7f01b494e1a09ed3037e16ba39edc7a29eb61a"
 
 [[package]]
-name = "generate-put-pbt"
-version = "0.1.0"
-dependencies = [
- "ra_ap_hir",
- "ra_ap_ide",
- "ra_ap_ide_db",
- "ra_ap_load-cargo",
- "ra_ap_paths",
- "ra_ap_project_model",
- "ra_ap_syntax",
- "syn",
-]
-
-[[package]]
 name = "hashbrown"
 version = "0.14.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -814,6 +800,23 @@ checksum = "89ae43fd86e4158d6db51ad8e2b80f313af9cc74f5c0e03ccb87de09998732de"
 dependencies = [
  "unicode-ident",
 ]
+
+[[package]]
+name = "propgen"
+version = "0.1.0"
+dependencies = [
+ "ra_ap_hir",
+ "ra_ap_ide",
+ "ra_ap_ide_db",
+ "ra_ap_load-cargo",
+ "ra_ap_paths",
+ "ra_ap_project_model",
+ "ra_ap_syntax",
+]
+
+[[package]]
+name = "propgen_macro"
+version = "0.1.0"
 
 [[package]]
 name = "pulldown-cmark"

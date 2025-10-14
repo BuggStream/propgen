@@ -1,11 +1,13 @@
+[workspace]
+resolver = "3"
+members = ["propgen_macro"]
+
 [package]
-name = "generate-put-pbt"
+name = "propgen"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-syn = { version = "2.0.106", features = ["full", "extra-traits"] }
-
 ra_ap_project_model = "0.0.301"
 ra_ap_hir = "0.0.301"
 ra_ap_ide = "0.0.301"
