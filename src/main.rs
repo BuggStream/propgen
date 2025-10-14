@@ -1,16 +1,12 @@
-use std::env;
-use std::error::Error;
-use std::ffi::OsStr;
-use std::path::{Path, PathBuf};
-use std::str::FromStr;
-use std::sync::LazyLock;
-use ra_ap_hir::Crate;
+use generate_put_pbt::source_file_tests;
+use ra_ap_hir::{Crate, EditionedFileId, Semantics};
 use ra_ap_ide::AnalysisHost;
-use ra_ap_ide_db::base_db::SourceDatabase;
-use ra_ap_load_cargo::{load_workspace, LoadCargoConfig, ProcMacroServerChoice};
+use ra_ap_load_cargo::{LoadCargoConfig, ProcMacroServerChoice, load_workspace};
 use ra_ap_paths::{AbsPathBuf, Utf8PathBuf};
 use ra_ap_project_model::{CargoConfig, ProjectManifest, ProjectWorkspace, RustLibSource};
-use generate_put_pbt::parse_tests;
+use std::error::Error;
+use std::str::FromStr;
+use ra_ap_ide_db::base_db::SourceDatabase;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let cargo_config = CargoConfig {
@@ -25,59 +21,46 @@ fn main() -> Result<(), Box<dyn Error>> {
     let path = AbsPathBuf::assert(src_path);
     let manifest = ProjectManifest::discover_single(&path)?;
 
-    let progress = |s| {
-        println!("{}", s);
-    };
+    let progress = |_| {};
 
-    let mut workspace = ProjectWorkspace::load(manifest, &cargo_config, &progress)?;
+    let workspace = ProjectWorkspace::load(manifest, &cargo_config, &progress)?;
     let load_cargo_config = LoadCargoConfig {
         load_out_dirs_from_check: true,
         with_proc_macro_server: ProcMacroServerChoice::Sysroot,
         prefill_caches: false,
     };
 
-    let (db, vfs, _proc_macro) =
-        load_workspace(workspace.clone(), &cargo_config.extra_env, &load_cargo_config)?;
+    let (db, _, _proc_macro) = load_workspace(
+        workspace.clone(),
+        &cargo_config.extra_env,
+        &load_cargo_config,
+    )?;
 
     let host = AnalysisHost::with_database(db);
     let db = host.raw_database();
 
     let krates = Crate::all(db);
-
-    let source_roots: Vec<_> = krates
+    let krates: Vec<_> = krates
         .iter()
-        .cloned()
-        .map(|krate| db.file_source_root(krate.root_file(db)).source_root_id(db))
+        .filter(|krate| krate.origin(db).is_local())
         .collect();
 
     for krate in krates {
-        println!("{:?}", krate.root_module().declarations(db));
-    }
+        let range = krate.root_module().definition_source_range(db).value;
+        let text = db.file_text(krate.root_file(db));
+        let t = &text.text(db)[range];
+        println!("{}", t);
 
-    Ok(())
-}
+        let edition = krate.edition(db);
 
-static RUST_EXTENSION: LazyLock<&OsStr> = LazyLock::new(|| OsStr::new("rs"));
+        let y: Vec<_> = krate.modules(db);
+        println!("{:?}", y);
+        println!("crate: {:?}", krate.display_name(db));
 
-/// Recursively search through the given input directory and output all `rs` files to the given
-/// output vec.
-///
-/// NOTE: This does not take the crate structure into account at all. In the future
-/// the relevant rust files should probably be found by hooking into the rust compiler.
-fn source_files(input_directory: &Path, output: &mut Vec<PathBuf>) -> Result<(), Box<dyn Error>> {
-    for entry_result in input_directory.read_dir()? {
-        let Ok(entry) = entry_result else {
-            continue;
-        };
-
-        let file_type = entry.file_type()?;
-        let entry_path = entry.path();
-
-        if file_type.is_dir() {
-            source_files(entry_path.as_path(), output)?;
-        } else if file_type.is_file() && Some(*RUST_EXTENSION) == entry_path.extension() {
-            output.push(entry_path)
-        }
+        let semantics = Semantics::new(db);
+        let editioned_file = EditionedFileId::new(db, krate.root_file(db), edition);
+        let sourcefile = semantics.parse(editioned_file);
+        source_file_tests(db, sourcefile);
     }
 
     Ok(())

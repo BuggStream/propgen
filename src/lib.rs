@@ -1,31 +1,25 @@
-use std::error::Error;
-use std::path::PathBuf;
-use crate::parser::parse_source_file;
+use ra_ap_ide_db::RootDatabase;
+use ra_ap_syntax::SourceFile;
+use ra_ap_syntax::ast::{HasAttrs, HasModuleItem, HasName, Item};
+use std::collections::VecDeque;
 
-pub mod parser;
+pub fn source_file_tests(_db: &RootDatabase, file: SourceFile) -> Vec<ra_ap_syntax::ast::Fn> {
+    let mut tests = Vec::new();
+    let mut item_queue = VecDeque::from_iter(file.items());
 
-pub fn parse_tests(files: &[PathBuf]) -> Result<(), Box<dyn Error>> {
-    for file in files {
-        let test_names = parse_source_file(file)?;
-        for test_name in test_names {
-            println!("{}", test_name);
+    while let Some(item) = item_queue.pop_front() {
+        match item {
+            Item::Module(module) => {
+                println!("module name: {}", module.name().unwrap());
+                item_queue.extend(module.item_list().into_iter().flat_map(|list| list.items()));
+            }
+            Item::Fn(f) if f.has_atom_attr("test") => {
+                println!("{}", f.name().unwrap().text());
+                tests.push(f);
+            }
+            _ => {}
         }
     }
 
-    Ok(())
-}
-
-pub fn double(x: i64) -> i64 {
-    x * 2
-}
-
-#[cfg(test)]
-pub mod test {
-    use crate::double;
-
-    #[test]
-    fn double_one() {
-        let doubled = double(1);
-        assert_eq!(doubled, 2);
-    }
+    tests
 }
