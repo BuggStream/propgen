@@ -2,6 +2,7 @@
 resolver = "3"
 members = ["propgen_macro"]
 default-members = ["."]
+exclude = ["data"]
 
 [workspace.dependencies]
 propgen_macro = { path = "propgen_macro" }
@@ -20,3 +21,5 @@ ra_ap_ide_db = "0.0.301"
 ra_ap_paths = "0.0.301"
 ra_ap_load-cargo = "0.0.301"
 ra_ap_syntax = "0.0.301"
+clap = { version = "4.5.49", features = ["derive"] }
+clap_derive = "4.5.49"

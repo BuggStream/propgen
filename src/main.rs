@@ -1,3 +1,4 @@
+use clap::Parser;
 use propgen::source_file_tests;
 use ra_ap_hir::{Crate, EditionedFileId, Semantics};
 use ra_ap_ide::AnalysisHost;
@@ -6,12 +7,30 @@ use ra_ap_load_cargo::{LoadCargoConfig, ProcMacroServerChoice, load_workspace};
 use ra_ap_paths::{AbsPathBuf, Utf8PathBuf};
 use ra_ap_project_model::{CargoConfig, ProjectManifest, ProjectWorkspace, RustLibSource};
 use std::error::Error;
-use std::str::FromStr;
+use std::path::PathBuf;
 
-const WORKSPACE_PATH: &str = "/home/jim/projects/thesis/hello";
-const WORKSPACE_CARGO_PATH: &str = "/home/jim/projects/thesis/hello/Cargo.toml";
+#[derive(Parser, Debug, Clone)]
+struct Cli {
+    project_path: PathBuf,
+}
+
+impl Cli {
+    pub fn paths(&self) -> std::io::Result<(PathBuf, PathBuf)> {
+        let absolute = std::path::absolute(&self.project_path)?;
+        let mut toml_file = absolute.clone();
+        toml_file.push("Cargo.toml");
+        Ok((absolute, toml_file))
+    }
+}
 
 fn main() -> Result<(), Box<dyn Error>> {
+    let cli = Cli::parse();
+    let (project_path, toml_path) = cli.paths()?;
+    let toml_path_str = toml_path.to_str().ok_or("Can't convert toml path back to string")?.to_string();
+
+    println!("{:?}", project_path);
+    println!("{:?}", toml_path_str);
+
     let cargo_config = CargoConfig {
         sysroot: Some(RustLibSource::Discover),
         all_targets: true,
@@ -19,7 +38,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         ..Default::default()
     };
 
-    let src_path = Utf8PathBuf::from_str(WORKSPACE_PATH)?;
+    let src_path = Utf8PathBuf::try_from(project_path)?;
 
     let path = AbsPathBuf::assert(src_path);
     let manifest = ProjectManifest::discover_single(&path)?;
@@ -42,7 +61,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let host = AnalysisHost::with_database(db);
     let db = host.raw_database();
 
-    let vfs_path = VfsPath::new_real_path(WORKSPACE_CARGO_PATH.to_string());
+    let vfs_path = VfsPath::new_real_path(toml_path_str);
     let (fileid, _) = vfs.file_id(&vfs_path).unwrap();
     let source_root_id = db.file_source_root(fileid).source_root_id(db);
     let krates = db.source_root_crates(source_root_id);
