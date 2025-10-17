@@ -1,12 +1,15 @@
 use propgen::source_file_tests;
 use ra_ap_hir::{Crate, EditionedFileId, Semantics};
 use ra_ap_ide::AnalysisHost;
-use ra_ap_ide_db::base_db::SourceDatabase;
+use ra_ap_ide_db::base_db::{RootQueryDb, SourceDatabase, VfsPath};
 use ra_ap_load_cargo::{LoadCargoConfig, ProcMacroServerChoice, load_workspace};
 use ra_ap_paths::{AbsPathBuf, Utf8PathBuf};
 use ra_ap_project_model::{CargoConfig, ProjectManifest, ProjectWorkspace, RustLibSource};
 use std::error::Error;
 use std::str::FromStr;
+
+const WORKSPACE_PATH: &str = "/home/jim/projects/thesis/hello";
+const WORKSPACE_CARGO_PATH: &str = "/home/jim/projects/thesis/hello/Cargo.toml";
 
 fn main() -> Result<(), Box<dyn Error>> {
     let cargo_config = CargoConfig {
@@ -16,7 +19,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         ..Default::default()
     };
 
-    let src_path = Utf8PathBuf::from_str("/home/jim/projects/thesis/hello")?;
+    let src_path = Utf8PathBuf::from_str(WORKSPACE_PATH)?;
 
     let path = AbsPathBuf::assert(src_path);
     let manifest = ProjectManifest::discover_single(&path)?;
@@ -30,7 +33,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         prefill_caches: false,
     };
 
-    let (db, _, _proc_macro) = load_workspace(
+    let (db, vfs, _) = load_workspace(
         workspace.clone(),
         &cargo_config.extra_env,
         &load_cargo_config,
@@ -39,18 +42,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     let host = AnalysisHost::with_database(db);
     let db = host.raw_database();
 
-    let krates = Crate::all(db);
-    let krates: Vec<_> = krates
-        .iter()
-        .filter(|krate| krate.origin(db).is_local())
-        .collect();
+    let vfs_path = VfsPath::new_real_path(WORKSPACE_CARGO_PATH.to_string());
+    let (fileid, _) = vfs.file_id(&vfs_path).unwrap();
+    let source_root_id = db.file_source_root(fileid).source_root_id(db);
+    let krates = db.source_root_crates(source_root_id);
+    let krates = krates.iter().map(|krate| Crate::from(*krate));
 
     for krate in krates {
-        let range = krate.root_module().definition_source_range(db).value;
-        let text = db.file_text(krate.root_file(db));
-        let t = &text.text(db)[range];
-        println!("{}", t);
-
         let edition = krate.edition(db);
 
         let y: Vec<_> = krate.modules(db);

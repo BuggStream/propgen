@@ -805,6 +805,7 @@ dependencies = [
 name = "propgen"
 version = "0.1.0"
 dependencies = [
+ "propgen_macro",
  "ra_ap_hir",
  "ra_ap_ide",
  "ra_ap_ide_db",
