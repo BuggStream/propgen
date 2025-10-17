@@ -10,7 +10,7 @@ use ra_ap_syntax::ast::{HasAttrs, HasModuleItem, HasName, Item};
 use ra_ap_vfs::Vfs;
 use std::collections::VecDeque;
 use std::error::Error;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub fn run_propgen(project_path: PathBuf) -> Result<(), Box<dyn Error>> {
     let (project_path, toml_path) = absolute_paths(&project_path)?;
@@ -66,7 +66,7 @@ pub fn run_propgen(project_path: PathBuf) -> Result<(), Box<dyn Error>> {
 pub fn project_crates(
     db: &RootDatabase,
     vfs: Vfs,
-    toml_path: &PathBuf,
+    toml_path: &Path,
 ) -> Result<Vec<Crate>, Box<dyn Error>> {
     let toml_path_str = toml_path
         .to_str()
@@ -81,7 +81,7 @@ pub fn project_crates(
     Ok(krates)
 }
 
-fn absolute_paths(project_path: &PathBuf) -> std::io::Result<(PathBuf, PathBuf)> {
+fn absolute_paths(project_path: &Path) -> std::io::Result<(PathBuf, PathBuf)> {
     let absolute = std::path::absolute(project_path)?;
     let mut toml_file = absolute.clone();
     toml_file.push("Cargo.toml");
