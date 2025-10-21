@@ -8,3 +8,8 @@ fn double_twice() {
     assert_eq!(doubled, 4);
 }
 
+#[propgen]
+fn other_stuff(x: i64) -> i64 {
+    x + x + x
+}
+

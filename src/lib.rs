@@ -5,12 +5,13 @@ use ra_ap_ide_db::base_db::{RootQueryDb, SourceDatabase, VfsPath};
 use ra_ap_load_cargo::{LoadCargoConfig, ProcMacroServerChoice, load_workspace};
 use ra_ap_paths::{AbsPathBuf, Utf8PathBuf};
 use ra_ap_project_model::{CargoConfig, ProjectManifest, ProjectWorkspace, RustLibSource};
-use ra_ap_syntax::SourceFile;
+use ra_ap_syntax::{AstNode, SourceFile};
 use ra_ap_syntax::ast::{HasAttrs, HasModuleItem, HasName, Item};
 use ra_ap_vfs::Vfs;
 use std::collections::VecDeque;
 use std::error::Error;
 use std::path::{Path, PathBuf};
+use ra_ap_hir::db::HirDatabase;
 
 pub fn run_propgen(project_path: PathBuf) -> Result<(), Box<dyn Error>> {
     let (project_path, toml_path) = absolute_paths(&project_path)?;
@@ -57,7 +58,7 @@ pub fn run_propgen(project_path: PathBuf) -> Result<(), Box<dyn Error>> {
         let semantics = Semantics::new(db);
         let editioned_file = EditionedFileId::new(db, krate.root_file(db), edition);
         let sourcefile = semantics.parse(editioned_file);
-        source_file_tests(db, sourcefile);
+        source_file_tests(db, sourcefile, &semantics);
     }
 
     Ok(())
@@ -90,7 +91,7 @@ fn absolute_paths(project_path: &Path) -> std::io::Result<(PathBuf, PathBuf)> {
 
 pub const PROPGEN_ATTR: &str = "propgen";
 
-pub fn source_file_tests(_db: &RootDatabase, file: SourceFile) -> Vec<ra_ap_syntax::ast::Fn> {
+pub fn source_file_tests<DB: HirDatabase>(_db: &DB, file: SourceFile, semantics: &Semantics<DB>) -> Vec<ra_ap_syntax::ast::Fn> {
     let mut tests = Vec::new();
     let mut item_queue = VecDeque::from_iter(file.items());
 
@@ -101,6 +102,10 @@ pub fn source_file_tests(_db: &RootDatabase, file: SourceFile) -> Vec<ra_ap_synt
                 item_queue.extend(module.item_list().into_iter().flat_map(|list| list.items()));
             }
             Item::Fn(f) if f.has_atom_attr(PROPGEN_ATTR) => {
+
+                // println!("{:?}", f.param_list().unwrap().params().map(|p| p.ty().unwrap()));
+                // println!("{:?}", f.param_list().unwrap().self_param().unwrap().ty());
+                println!("{:?}", f.ret_type());
                 println!("------------attribute: {}", f.name().unwrap().text());
                 tests.push(f);
             }
