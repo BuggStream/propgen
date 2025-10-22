@@ -9,7 +9,7 @@ fn double_twice() {
 }
 
 #[propgen]
-fn other_stuff(x: i64) -> i64 {
-    x + x + x
+fn other_stuff(x: String) -> String {
+    format!("... {x}")
 }
 

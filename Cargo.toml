@@ -17,8 +17,6 @@ default-run = "propgen"
 propgen_macro = { path = "propgen_macro" }
 ra_ap_project_model = "0.0.301"
 ra_ap_hir = "0.0.301"
-ra_ap_hir_def = "0.0.301"
-ra_ap_hir_ty = "0.0.301"
 ra_ap_ide = "0.0.301"
 ra_ap_ide_db = "0.0.301"
 ra_ap_paths = "0.0.301"
