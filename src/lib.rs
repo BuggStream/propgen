@@ -1,20 +1,13 @@
 mod generate;
 
-use crate::generate::rewrite_fn;
-use ra_ap_hir::db::HirDatabase;
-use ra_ap_hir::{Crate, DisplayTarget, EditionedFileId, HirDisplay, Semantics};
-use ra_ap_ide::AnalysisHost;
+use generate::PropgenCrateTarget;
+use ra_ap_hir::{Crate};
 use ra_ap_ide_db::RootDatabase;
 use ra_ap_ide_db::base_db::{RootQueryDb, SourceDatabase, VfsPath};
-use ra_ap_ide_db::source_change::SourceChangeBuilder;
-use ra_ap_ide_db::symbol_index::SymbolsDatabase;
 use ra_ap_load_cargo::{LoadCargoConfig, ProcMacroServerChoice, load_workspace};
 use ra_ap_paths::{AbsPathBuf, Utf8PathBuf};
 use ra_ap_project_model::{CargoConfig, ProjectManifest, ProjectWorkspace, RustLibSource};
-use ra_ap_syntax::ast::{HasAttrs, HasModuleItem, HasName, Item};
-use ra_ap_syntax::{AstNode, SourceFile};
-use ra_ap_vfs::{FileId, Vfs};
-use std::collections::VecDeque;
+use ra_ap_vfs::Vfs;
 use std::error::Error;
 use std::path::{Path, PathBuf};
 
@@ -48,49 +41,21 @@ pub fn run_propgen(project_path: PathBuf) -> Result<(), Box<dyn Error>> {
         &load_cargo_config,
     )?;
 
-    let krates = project_crates(&db, vfs, &toml_path)?;
+    let crate_targets = propgen_targets(&db, &vfs, &toml_path);
 
-    for krate in krates.iter() {
-        let edition = krate.edition(&db);
+    for crate_target in crate_targets {
+        let source_change = crate_target.generate_pbt(&db)?;
 
-        let y: Vec<_> = krate.modules(&db);
-        println!("{:?}", y);
-        println!("crate: {:?}", krate.display_name(&db));
-
-        let semantics = Semantics::new(&db);
-        let editioned_file = EditionedFileId::new(&db, krate.root_file(&db), edition);
-        let sourcefile = semantics.parse(editioned_file);
-        let display_target = krate.to_display_target(&db);
-        source_file_tests(
-            &db,
-            editioned_file.file_id(&db),
-            sourcefile,
-            &semantics,
-            display_target,
-        );
+        for (file_id, (change, _)) in source_change.source_file_edits.iter() {
+            let x = vfs.file_path(*file_id);
+            println!("File: {:?}", x.name_and_extension());
+            let mut file_text = db.file_text(*file_id).text(&db).to_string();
+            change.apply(&mut file_text);
+            println!("Updated file:\n{}", file_text);
+        }
     }
 
     Ok(())
-}
-
-// TODO: Start working with fileids retrieved via source root. Than make sure they belong to the
-//       correct crate. 
-pub fn project_crates(
-    db: &RootDatabase,
-    vfs: Vfs,
-    toml_path: &Path,
-) -> Result<Vec<Crate>, Box<dyn Error>> {
-    let toml_path_str = toml_path
-        .to_str()
-        .ok_or("Can't convert toml path back to string")?
-        .to_string();
-    let vfs_path = VfsPath::new_real_path(toml_path_str);
-    let (fileid, _) = vfs.file_id(&vfs_path).unwrap();
-    let source_root_id = db.file_source_root(fileid).source_root_id(db);
-    let krates = db.source_root_crates(source_root_id);
-    let krates = krates.iter().map(|krate| Crate::from(*krate)).collect();
-
-    Ok(krates)
 }
 
 fn absolute_paths(project_path: &Path) -> std::io::Result<(PathBuf, PathBuf)> {
@@ -100,62 +65,18 @@ fn absolute_paths(project_path: &Path) -> std::io::Result<(PathBuf, PathBuf)> {
     Ok((absolute, toml_file))
 }
 
-pub const PROPGEN_ATTR: &str = "propgen";
+pub fn propgen_targets(db: &RootDatabase, vfs: &Vfs, toml_path: &Path) -> Vec<PropgenCrateTarget> {
+    let toml_path_str = toml_path
+        .to_str()
+        .expect("Propgen / Rust analyzer does not support non utf-8 paths")
+        .to_string();
+    let vfs_path = VfsPath::new_real_path(toml_path_str);
+    let (fileid, _) = vfs.file_id(&vfs_path).unwrap();
+    let source_root_id = db.file_source_root(fileid).source_root_id(db);
+    let krates = db.source_root_crates(source_root_id);
 
-pub fn source_file_tests<DB: HirDatabase>(
-    db: &DB,
-    file_id: FileId,
-    file: SourceFile,
-    semantics: &Semantics<DB>,
-    display_target: DisplayTarget,
-) -> Vec<ra_ap_syntax::ast::Fn> {
-    let mut tests = Vec::new();
-    let mut item_queue = VecDeque::from_iter(file.items());
-
-    while let Some(item) = item_queue.pop_front() {
-        match item {
-            Item::Module(module) => {
-                println!("module name: {}", module.name().unwrap());
-                item_queue.extend(module.item_list().into_iter().flat_map(|list| list.items()));
-            }
-            Item::Fn(f) if f.has_atom_attr(PROPGEN_ATTR) => {
-                // println!("{:?}", f.param_list().unwrap().params().map(|p| p.ty().unwrap()));
-                // println!("{:?}", f.param_list().unwrap().self_param().unwrap().ty());
-                if let Some(ret_type) = f.ret_type()
-                    && let Some(ast_type) = ret_type.ty()
-                {
-                    let mut builder = SourceChangeBuilder::new(file_id);
-
-                    let args = f
-                        .param_list()
-                        .unwrap()
-                        .params()
-                        .into_iter()
-                        .flat_map(|d| d.ty())
-                        .flat_map(|ast_type| semantics.resolve_type(&ast_type));
-
-                    println!("{:?}", f.body().unwrap().stmt_list().unwrap().statements());
-
-                    for arg in args {
-                        let ty = semantics.resolve_type(&ast_type).unwrap();
-                        println!(
-                            "Arg type: `{}` equals return type: `{}`? - {}",
-                            arg.display(db, display_target),
-                            ty.display(db, display_target),
-                            arg.eq(&ty)
-                        );
-                    }
-
-                    if let Ok(_) = rewrite_fn(&mut builder, f) {
-                        let change = builder.finish();
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-    tests
+    krates
+        .iter()
+        .map(|krate| PropgenCrateTarget::from(Crate::from(*krate)))
+        .collect()
 }
-
-pub fn crate_files<DB: HirDatabase>(db: &DB, krate: Crate) -> Vec<FileId> {}

@@ -930,6 +930,7 @@ dependencies = [
  "ra_ap_project_model",
  "ra_ap_syntax",
  "ra_ap_vfs",
+ "thiserror",
 ]
 
 [[package]]

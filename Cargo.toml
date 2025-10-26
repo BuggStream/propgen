@@ -25,3 +25,4 @@ ra_ap_syntax = "0.0.301"
 ra_ap_vfs = "0.0.301"
 clap = { version = "4.5.49", features = ["derive"] }
 clap_derive = "4.5.49"
+thiserror = "2.0.17"
