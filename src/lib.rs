@@ -1,20 +1,22 @@
 mod generate;
 
+use crate::generate::rewrite_fn;
 use ra_ap_hir::db::HirDatabase;
 use ra_ap_hir::{Crate, DisplayTarget, EditionedFileId, HirDisplay, Semantics};
 use ra_ap_ide::AnalysisHost;
 use ra_ap_ide_db::RootDatabase;
 use ra_ap_ide_db::base_db::{RootQueryDb, SourceDatabase, VfsPath};
+use ra_ap_ide_db::source_change::SourceChangeBuilder;
+use ra_ap_ide_db::symbol_index::SymbolsDatabase;
 use ra_ap_load_cargo::{LoadCargoConfig, ProcMacroServerChoice, load_workspace};
 use ra_ap_paths::{AbsPathBuf, Utf8PathBuf};
 use ra_ap_project_model::{CargoConfig, ProjectManifest, ProjectWorkspace, RustLibSource};
 use ra_ap_syntax::ast::{HasAttrs, HasModuleItem, HasName, Item};
 use ra_ap_syntax::{AstNode, SourceFile};
-use ra_ap_vfs::Vfs;
+use ra_ap_vfs::{FileId, Vfs};
 use std::collections::VecDeque;
 use std::error::Error;
 use std::path::{Path, PathBuf};
-use crate::generate::rewrite_fn;
 
 pub fn run_propgen(project_path: PathBuf) -> Result<(), Box<dyn Error>> {
     let (project_path, toml_path) = absolute_paths(&project_path)?;
@@ -46,28 +48,33 @@ pub fn run_propgen(project_path: PathBuf) -> Result<(), Box<dyn Error>> {
         &load_cargo_config,
     )?;
 
-    let host = AnalysisHost::with_database(db);
-    let db = host.raw_database();
-
-    let krates = project_crates(db, vfs, &toml_path)?;
+    let krates = project_crates(&db, vfs, &toml_path)?;
 
     for krate in krates.iter() {
-        let edition = krate.edition(db);
+        let edition = krate.edition(&db);
 
-        let y: Vec<_> = krate.modules(db);
+        let y: Vec<_> = krate.modules(&db);
         println!("{:?}", y);
-        println!("crate: {:?}", krate.display_name(db));
+        println!("crate: {:?}", krate.display_name(&db));
 
-        let semantics = Semantics::new(db);
-        let editioned_file = EditionedFileId::new(db, krate.root_file(db), edition);
+        let semantics = Semantics::new(&db);
+        let editioned_file = EditionedFileId::new(&db, krate.root_file(&db), edition);
         let sourcefile = semantics.parse(editioned_file);
-        let display_target = krate.to_display_target(db);
-        source_file_tests(db, sourcefile, &semantics, display_target);
+        let display_target = krate.to_display_target(&db);
+        source_file_tests(
+            &db,
+            editioned_file.file_id(&db),
+            sourcefile,
+            &semantics,
+            display_target,
+        );
     }
 
     Ok(())
 }
 
+// TODO: Start working with fileids retrieved via source root. Than make sure they belong to the
+//       correct crate. 
 pub fn project_crates(
     db: &RootDatabase,
     vfs: Vfs,
@@ -97,6 +104,7 @@ pub const PROPGEN_ATTR: &str = "propgen";
 
 pub fn source_file_tests<DB: HirDatabase>(
     db: &DB,
+    file_id: FileId,
     file: SourceFile,
     semantics: &Semantics<DB>,
     display_target: DisplayTarget,
@@ -116,6 +124,8 @@ pub fn source_file_tests<DB: HirDatabase>(
                 if let Some(ret_type) = f.ret_type()
                     && let Some(ast_type) = ret_type.ty()
                 {
+                    let mut builder = SourceChangeBuilder::new(file_id);
+
                     let args = f
                         .param_list()
                         .unwrap()
@@ -125,10 +135,6 @@ pub fn source_file_tests<DB: HirDatabase>(
                         .flat_map(|ast_type| semantics.resolve_type(&ast_type));
 
                     println!("{:?}", f.body().unwrap().stmt_list().unwrap().statements());
-
-                    // let body = f.body().unwrap().syntax().text().to_string();
-                    //
-                    // println!("{}", body);
 
                     for arg in args {
                         let ty = semantics.resolve_type(&ast_type).unwrap();
@@ -140,13 +146,10 @@ pub fn source_file_tests<DB: HirDatabase>(
                         );
                     }
 
-                    let edit = rewrite_fn(&f);
-                    println!("{}", edit.is_some());
-                    println!("{}", edit.unwrap().syntax().to_string());
+                    if let Ok(_) = rewrite_fn(&mut builder, f) {
+                        let change = builder.finish();
+                    }
                 }
-
-                println!("------------attribute: {}", f.name().unwrap().text());
-                tests.push(f);
             }
             _ => {}
         }
@@ -154,3 +157,5 @@ pub fn source_file_tests<DB: HirDatabase>(
 
     tests
 }
+
+pub fn crate_files<DB: HirDatabase>(db: &DB, krate: Crate) -> Vec<FileId> {}
