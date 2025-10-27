@@ -1,7 +1,7 @@
 mod generate;
 
 use generate::PropgenCrateTarget;
-use ra_ap_hir::{Crate};
+use ra_ap_hir::Crate;
 use ra_ap_ide_db::RootDatabase;
 use ra_ap_ide_db::base_db::{RootQueryDb, SourceDatabase, VfsPath};
 use ra_ap_load_cargo::{LoadCargoConfig, ProcMacroServerChoice, load_workspace};
