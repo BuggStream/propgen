@@ -1,3 +1,5 @@
+use proptest::arbitrary::any;
+use proptest::proptest;
 use hello::double;
 use propgen_macro::propgen;
 
@@ -11,5 +13,12 @@ fn double_twice() {
 #[propgen]
 fn other_stuff(x: String) -> String {
     format!("... {x}")
+}
+
+proptest! {
+    #[test]
+    fn double_proptest(x in (i64::MIN / 2)..(i64::MAX / 2)) {
+        assert_eq!(double(x), x * 2);
+    }
 }
 

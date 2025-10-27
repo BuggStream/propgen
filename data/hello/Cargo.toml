@@ -5,3 +5,4 @@ edition = "2024"
 
 [dependencies]
 propgen_macro = { path = "../../propgen_macro" }
+proptest = "1.9.0"

@@ -2,9 +2,10 @@ use ra_ap_hir::db::HirDatabase;
 use ra_ap_hir::{Crate, EditionedFileId, Semantics};
 use ra_ap_ide_db::source_change::{SourceChange, SourceChangeBuilder};
 use ra_ap_syntax::ast::{HasAttrs, HasModuleItem, Item, Stmt, make};
-use ra_ap_syntax::{AstNode, ast, ted};
+use ra_ap_syntax::{AstNode, ast, ted, SyntaxKind, NodeOrToken};
 use ra_ap_vfs::FileId;
 use std::collections::VecDeque;
+use ra_ap_syntax::syntax_editor::Element;
 use thiserror::Error;
 
 #[derive(Error, Copy, Clone, Debug)]
@@ -103,7 +104,13 @@ impl PropgenFileTarget {
                 Item::Fn(f) if f.has_atom_attr(PROPGEN_ATTR) => {
                     targets.push(f);
                 }
-                _ => {}
+                Item::MacroCall(c) => {
+                    println!("{:?}", c.token_tree().unwrap());
+                    // println!("{}", c.syntax());
+                }
+                _ => {
+                    println!("{:?}", item);
+                }
             }
         }
 
@@ -112,19 +119,12 @@ impl PropgenFileTarget {
 }
 
 fn rewrite_fn(f: ast::Fn) -> Result<(), PbtError> {
-    let body = f.body().ok_or(PbtError::NoFnBody)?;
+    let f = Item::Fn(f);
+    let tt = make::ext::token_tree_from_node(f.syntax());
+    let macro_body = make::token_tree(SyntaxKind::L_CURLY, [NodeOrToken::Node(tt)]);
+    let macro_name = make::ext::ident_path("proptest");
+    let macro_call = make::expr_macro(macro_name, macro_body);
 
-    let literal = make::expr_literal("\"Hello\"");
-    let args = make::ext::token_tree_from_node(make::arg_list([literal.into()]).syntax());
-    let macro_name = make::ext::ident_path("println");
-    let macro_call = make::expr_macro(macro_name, args);
-    let stmt: Stmt = make::expr_stmt(macro_call.into()).into();
-    let new_body = make::block_expr(
-        [stmt].into_iter().chain(body.statements()),
-        body.tail_expr(),
-    )
-    .clone_for_update();
-
-    ted::replace(body.syntax(), new_body.syntax());
+    ted::replace(f.syntax(), macro_call.clone_for_update().syntax());
     Ok(())
 }
