@@ -2,10 +2,11 @@ use ra_ap_hir::db::HirDatabase;
 use ra_ap_hir::{Crate, EditionedFileId, Semantics};
 use ra_ap_ide_db::source_change::{SourceChange, SourceChangeBuilder};
 use ra_ap_syntax::ast::{HasAttrs, HasModuleItem, Item, Stmt, make};
-use ra_ap_syntax::{AstNode, ast, ted, SyntaxKind, NodeOrToken};
+use ra_ap_syntax::ted::{Element, Position};
+use ra_ap_syntax::{AstNode, NodeOrToken, SyntaxKind, ast, ted};
 use ra_ap_vfs::FileId;
 use std::collections::VecDeque;
-use ra_ap_syntax::syntax_editor::Element;
+use ra_ap_syntax::ast::edit::AstNodeEdit;
 use thiserror::Error;
 
 #[derive(Error, Copy, Clone, Debug)]
@@ -105,6 +106,8 @@ impl PropgenFileTarget {
                     targets.push(f);
                 }
                 Item::MacroCall(c) => {
+                    let x: Vec<_> = c.syntax().descendants_with_tokens().collect();
+                    println!("{:?}", x);
                     println!("{:?}", c.token_tree().unwrap());
                     // println!("{}", c.syntax());
                 }
@@ -119,12 +122,25 @@ impl PropgenFileTarget {
 }
 
 fn rewrite_fn(f: ast::Fn) -> Result<(), PbtError> {
-    let f = Item::Fn(f);
-    let tt = make::ext::token_tree_from_node(f.syntax());
-    let macro_body = make::token_tree(SyntaxKind::L_CURLY, [NodeOrToken::Node(tt)]);
-    let macro_name = make::ext::ident_path("proptest");
-    let macro_call = make::expr_macro(macro_name, macro_body);
+    // let f_params = f.param_list().unwrap();
+    // let new_params = make::param_list(None, [make::ext::empty_str()])
+    //
+    // ted::replace(f_params, )
 
-    ted::replace(f.syntax(), macro_call.clone_for_update().syntax());
+    println!("{:?} ---- {}", f.param_list().unwrap().syntax(), f.param_list().unwrap().syntax());
+
+    let syntax_token = make::tokens::WsBuilder::new("tt!(x in (i64::MIN / 2)..(i64::MAX / 2));").ws();
+    println!("{:?} ----- {}", syntax_token, syntax_token);
+
+    let tokens = f
+        .syntax()
+        .descendants_with_tokens()
+        .filter_map(|x| x.into_token().map(|token| NodeOrToken::Token(token)));
+    let macro_body = make::token_tree(SyntaxKind::L_CURLY, tokens).reset_indent();
+    let macro_name = make::ext::ident_path("proptest");
+    let macro_call = make::expr_macro(macro_name, macro_body.clone()).clone_for_update();
+    let proptest_syntax = macro_call.syntax();
+
+    ted::replace(f.syntax(), proptest_syntax);
     Ok(())
 }

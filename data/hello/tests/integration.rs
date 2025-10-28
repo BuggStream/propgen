@@ -1,4 +1,3 @@
-use proptest::arbitrary::any;
 use proptest::proptest;
 use hello::double;
 use propgen_macro::propgen;
