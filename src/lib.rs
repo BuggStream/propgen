@@ -2,6 +2,7 @@ mod generate;
 
 use generate::PropgenCrateTarget;
 use ra_ap_hir::Crate;
+use ra_ap_hir::db::HirDatabase;
 use ra_ap_ide_db::RootDatabase;
 use ra_ap_ide_db::base_db::{RootQueryDb, SourceDatabase, VfsPath};
 use ra_ap_load_cargo::{LoadCargoConfig, ProcMacroServerChoice, load_workspace};
@@ -44,7 +45,7 @@ pub fn run_propgen(project_path: PathBuf) -> Result<(), Box<dyn Error>> {
     let crate_targets = propgen_targets(&db, &vfs, &toml_path);
 
     for crate_target in crate_targets {
-        let source_change = crate_target.generate_pbt(&db)?;
+        let source_change = crate_target.generate_pbt()?;
 
         for (file_id, (change, _)) in source_change.source_file_edits.iter() {
             let x = vfs.file_path(*file_id);
@@ -65,7 +66,11 @@ fn absolute_paths(project_path: &Path) -> std::io::Result<(PathBuf, PathBuf)> {
     Ok((absolute, toml_file))
 }
 
-pub fn propgen_targets(db: &RootDatabase, vfs: &Vfs, toml_path: &Path) -> Vec<PropgenCrateTarget> {
+pub fn propgen_targets<'a>(
+    db: &'a RootDatabase,
+    vfs: &Vfs,
+    toml_path: &Path,
+) -> Vec<PropgenCrateTarget<'a, impl HirDatabase + 'a>> {
     let toml_path_str = toml_path
         .to_str()
         .expect("Propgen / Rust analyzer does not support non utf-8 paths")
@@ -77,6 +82,6 @@ pub fn propgen_targets(db: &RootDatabase, vfs: &Vfs, toml_path: &Path) -> Vec<Pr
 
     krates
         .iter()
-        .map(|krate| PropgenCrateTarget::from(Crate::from(*krate)))
+        .map(|krate| PropgenCrateTarget::new(Crate::from(*krate), db))
         .collect()
 }

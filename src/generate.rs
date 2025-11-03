@@ -1,12 +1,13 @@
 use ra_ap_hir::db::HirDatabase;
-use ra_ap_hir::{Crate, EditionedFileId, Semantics};
+use ra_ap_hir::{Crate, EditionedFileId, PathResolution, Semantics};
+use ra_ap_ide::Edition;
 use ra_ap_ide_db::source_change::{SourceChange, SourceChangeBuilder};
-use ra_ap_syntax::ast::{HasAttrs, HasModuleItem, Item, Stmt, make};
-use ra_ap_syntax::ted::{Element, Position};
-use ra_ap_syntax::{AstNode, NodeOrToken, SyntaxKind, ast, ted};
+use ra_ap_syntax::ast::edit::AstNodeEdit;
+use ra_ap_syntax::ast::{HasAttrs, HasModuleItem, Item, make};
+use ra_ap_syntax::{AstNode, NodeOrToken, SourceFile, SyntaxKind, T, ast, ted};
 use ra_ap_vfs::FileId;
 use std::collections::VecDeque;
-use ra_ap_syntax::ast::edit::AstNodeEdit;
+use std::ops::Add;
 use thiserror::Error;
 
 #[derive(Error, Copy, Clone, Debug)]
@@ -15,24 +16,36 @@ pub enum PbtError {
     NoFnBody,
 }
 
-pub struct PropgenCrateTarget {
+pub struct PropgenCrateTarget<'db, DB: HirDatabase + 'db> {
     krate: Crate,
+    semantics: Semantics<'db, DB>,
 }
 
-impl PropgenCrateTarget {
-    pub fn generate_pbt(self, db: &impl HirDatabase) -> Result<SourceChange, PbtError> {
-        let mut targets = self.file_targets(db).into_iter();
+impl<'db, DB: HirDatabase + 'db> PropgenCrateTarget<'db, DB> {
+    pub fn new(krate: Crate, db: &'db DB) -> PropgenCrateTarget<'db, DB> {
+        PropgenCrateTarget {
+            krate,
+            semantics: Semantics::new(db),
+        }
+    }
+
+    pub fn generate_pbt(self) -> Result<SourceChange, PbtError> {
+        let mut targets = self.file_targets(self.db()).into_iter();
         let Some(first_target) = targets.next() else {
             return Ok(SourceChange::default());
         };
-        let mut source_change = first_target.generate_pbt(db)?;
+        let mut source_change = first_target.generate_pbt(&self)?;
 
         for next_target in targets {
-            let new_change = next_target.generate_pbt(db)?;
+            let new_change = next_target.generate_pbt(&self)?;
             source_change = source_change.merge(new_change);
         }
 
         Ok(source_change)
+    }
+
+    fn db(&self) -> &DB {
+        self.semantics.db
     }
 
     fn file_targets(&self, db: &impl HirDatabase) -> Vec<PropgenFileTarget> {
@@ -56,12 +69,6 @@ impl PropgenCrateTarget {
     }
 }
 
-impl From<Crate> for PropgenCrateTarget {
-    fn from(krate: Crate) -> Self {
-        PropgenCrateTarget { krate }
-    }
-}
-
 pub const PROPGEN_ATTR: &str = "propgen";
 
 struct PropgenFileTarget {
@@ -74,11 +81,14 @@ impl PropgenFileTarget {
         PropgenFileTarget { krate, file_id }
     }
 
-    pub fn generate_pbt(self, db: &impl HirDatabase) -> Result<SourceChange, PbtError> {
+    pub fn generate_pbt(
+        self,
+        crate_target: &PropgenCrateTarget<'_, impl HirDatabase>,
+    ) -> Result<SourceChange, PbtError> {
         let mut builder = SourceChangeBuilder::new(self.file_id);
 
-        for method in self.targeted_methods(&mut builder, db) {
-            rewrite_fn(method)?;
+        for method in self.targeted_methods(&mut builder, crate_target) {
+            rewrite_fn(method, &crate_target.semantics)?;
         }
 
         Ok(builder.finish())
@@ -87,12 +97,15 @@ impl PropgenFileTarget {
     fn targeted_methods(
         &self,
         builder: &mut SourceChangeBuilder,
-        db: &impl HirDatabase,
+        crate_target: &PropgenCrateTarget<'_, impl HirDatabase>,
     ) -> Vec<ast::Fn> {
         let mut targets = Vec::new();
-        let semantics = Semantics::new(db);
-        let editioned_file = EditionedFileId::new(db, self.file_id, self.krate.edition(db));
-        let source_file = semantics.parse(editioned_file);
+        let editioned_file = EditionedFileId::new(
+            crate_target.db(),
+            self.file_id,
+            self.krate.edition(crate_target.db()),
+        );
+        let source_file = crate_target.semantics.parse(editioned_file);
         let source_file = builder.make_mut(source_file);
 
         let mut item_queue = VecDeque::from_iter(source_file.items());
@@ -102,18 +115,10 @@ impl PropgenFileTarget {
                 Item::Module(module) => {
                     item_queue.extend(module.item_list().into_iter().flat_map(|list| list.items()));
                 }
-                Item::Fn(f) if f.has_atom_attr(PROPGEN_ATTR) => {
+                Item::Fn(f) if is_propgen_target(&f) => {
                     targets.push(f);
                 }
-                Item::MacroCall(c) => {
-                    let x: Vec<_> = c.syntax().descendants_with_tokens().collect();
-                    println!("{:?}", x);
-                    println!("{:?}", c.token_tree().unwrap());
-                    // println!("{}", c.syntax());
-                }
-                _ => {
-                    println!("{:?}", item);
-                }
+                _ => {}
             }
         }
 
@@ -121,26 +126,76 @@ impl PropgenFileTarget {
     }
 }
 
-fn rewrite_fn(f: ast::Fn) -> Result<(), PbtError> {
-    // let f_params = f.param_list().unwrap();
-    // let new_params = make::param_list(None, [make::ext::empty_str()])
-    //
-    // ted::replace(f_params, )
+fn is_propgen_target(f: &ast::Fn) -> bool {
+    f.has_atom_attr(PROPGEN_ATTR) && f.has_atom_attr("test")
+}
 
-    println!("{:?} ---- {}", f.param_list().unwrap().syntax(), f.param_list().unwrap().syntax());
+fn rewrite_fn(f: ast::Fn, semantics: &Semantics<'_, impl HirDatabase>) -> Result<(), PbtError> {
+    let cur_indent = f.indent_level();
+    let macro_body = token_tree_from_str(
+        SyntaxKind::L_PAREN,
+        "x in (i64::MIN / 2)..(i64::MAX / 2)",
+        false,
+    );
+    let params = f.param_list().unwrap();
 
-    let syntax_token = make::tokens::WsBuilder::new("tt!(x in (i64::MIN / 2)..(i64::MAX / 2));").ws();
-    println!("{:?} ----- {}", syntax_token, syntax_token);
+    let defs = f
+        .attrs()
+        .filter_map(|attr| attr.as_simple_path())
+        .filter_map(|attr_path| semantics.resolve_path(&attr_path))
+        .filter_map(|path_resolution| match path_resolution {
+            PathResolution::Def(def) => Some(def),
+            _ => None,
+        });
 
-    let tokens = f
+    for def in defs {
+        let attrs = def.attrs(semantics.db).unwrap();
+        let x: Vec<_> = attrs
+            .iter()
+            .filter_map(|a| a.path().as_ident())
+            .map(|name| name.as_str())
+            .collect();
+        println!("{:?}", x);
+    }
+
+    ted::replace(params.syntax(), macro_body.syntax());
+
+    let f_tokens = f
+        .indent(cur_indent.add(1))
         .syntax()
         .descendants_with_tokens()
-        .filter_map(|x| x.into_token().map(|token| NodeOrToken::Token(token)));
-    let macro_body = make::token_tree(SyntaxKind::L_CURLY, tokens).reset_indent();
+        .filter_map(|x| x.into_token());
+    let tokens = [make::tokens::single_newline()]
+        .into_iter()
+        .chain(f_tokens)
+        .chain([make::tokens::single_newline()])
+        .map(|token| NodeOrToken::Token(token));
+    let macro_body = make::token_tree(SyntaxKind::L_CURLY, tokens);
     let macro_name = make::ext::ident_path("proptest");
     let macro_call = make::expr_macro(macro_name, macro_body.clone()).clone_for_update();
     let proptest_syntax = macro_call.syntax();
 
     ted::replace(f.syntax(), proptest_syntax);
     Ok(())
+}
+
+fn token_tree_from_str(delimiter: SyntaxKind, text: &str, multiline_block: bool) -> ast::TokenTree {
+    let (l_delimiter, r_delimiter) = match delimiter {
+        T!['('] => ('(', ')'),
+        T!['['] => ('[', ']'),
+        T!['{'] => ('{', '}'),
+        _ => panic!("invalid delimiter `{delimiter:?}`"),
+    };
+
+    let formatted = match multiline_block {
+        false => format!("println!{}{}{}", l_delimiter, text, r_delimiter),
+        true => format!("println!{}\n{}\n{}", l_delimiter, text, r_delimiter),
+    };
+    let source_file = SourceFile::parse(&formatted, Edition::CURRENT).tree();
+
+    let Item::MacroCall(mc) = source_file.items().next().unwrap() else {
+        unreachable!("Should only contain macro as first item");
+    };
+
+    mc.token_tree().unwrap().reset_indent()
 }
