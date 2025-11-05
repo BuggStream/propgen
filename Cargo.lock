@@ -923,6 +923,7 @@ dependencies = [
  "clap_derive",
  "propgen_macro",
  "ra_ap_hir",
+ "ra_ap_hir_expand",
  "ra_ap_ide",
  "ra_ap_ide_db",
  "ra_ap_load-cargo",

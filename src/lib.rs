@@ -1,4 +1,5 @@
 mod generate;
+mod semantics;
 
 use generate::PropgenCrateTarget;
 use ra_ap_hir::Crate;

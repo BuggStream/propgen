@@ -1,5 +1,5 @@
 use ra_ap_hir::db::HirDatabase;
-use ra_ap_hir::{Crate, EditionedFileId, PathResolution, Semantics};
+use ra_ap_hir::{Crate, EditionedFileId, Semantics};
 use ra_ap_ide::Edition;
 use ra_ap_ide_db::source_change::{SourceChange, SourceChangeBuilder};
 use ra_ap_syntax::ast::edit::AstNodeEdit;
@@ -130,7 +130,7 @@ fn is_propgen_target(f: &ast::Fn) -> bool {
     f.has_atom_attr(PROPGEN_ATTR) && f.has_atom_attr("test")
 }
 
-fn rewrite_fn(f: ast::Fn, semantics: &Semantics<'_, impl HirDatabase>) -> Result<(), PbtError> {
+fn rewrite_fn(f: ast::Fn, _semantics: &Semantics<'_, impl HirDatabase>) -> Result<(), PbtError> {
     let cur_indent = f.indent_level();
     let macro_body = token_tree_from_str(
         SyntaxKind::L_PAREN,
@@ -139,24 +139,7 @@ fn rewrite_fn(f: ast::Fn, semantics: &Semantics<'_, impl HirDatabase>) -> Result
     );
     let params = f.param_list().unwrap();
 
-    let defs = f
-        .attrs()
-        .filter_map(|attr| attr.as_simple_path())
-        .filter_map(|attr_path| semantics.resolve_path(&attr_path))
-        .filter_map(|path_resolution| match path_resolution {
-            PathResolution::Def(def) => Some(def),
-            _ => None,
-        });
-
-    for def in defs {
-        let attrs = def.attrs(semantics.db).unwrap();
-        let x: Vec<_> = attrs
-            .iter()
-            .filter_map(|a| a.path().as_ident())
-            .map(|name| name.as_str())
-            .collect();
-        println!("{:?}", x);
-    }
+    remove_propgen_attr(&f);
 
     ted::replace(params.syntax(), macro_body.syntax());
 
@@ -177,6 +160,20 @@ fn rewrite_fn(f: ast::Fn, semantics: &Semantics<'_, impl HirDatabase>) -> Result
 
     ted::replace(f.syntax(), proptest_syntax);
     Ok(())
+}
+
+fn remove_propgen_attr(f: &ast::Fn) {
+    let propgen_attr = f.attrs().find(|attr| {
+        if let Some(meta) = attr.meta() {
+            meta.to_string() == "propgen"
+        } else {
+            false
+        }
+    });
+
+    if let Some(attr) = propgen_attr {
+        ted::remove(attr.syntax())
+    }
 }
 
 fn token_tree_from_str(delimiter: SyntaxKind, text: &str, multiline_block: bool) -> ast::TokenTree {
