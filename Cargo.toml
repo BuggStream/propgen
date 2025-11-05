@@ -25,8 +25,8 @@ ra_ap_load-cargo = "0.0.304"
 ra_ap_syntax = "0.0.304"
 ra_ap_vfs = "0.0.304"
 clap = { version = "4.5.49", features = ["derive"] }
-clap_derive = "4.5.49"
 thiserror = "2.0.17"
+itertools = "0.14.0"
 
 [profile.dev]
 opt-level = 1

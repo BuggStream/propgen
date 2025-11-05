@@ -72,6 +72,7 @@ impl<'db, DB: HirDatabase + 'db> PropgenCrateTarget<'db, DB> {
 }
 
 pub const PROPGEN_ATTR: &str = "propgen";
+pub const PROPGEN_INPUT_ATTR: &str = "propgen_input";
 
 struct PropgenFileTarget {
     krate: Crate,
@@ -141,6 +142,22 @@ fn rewrite_fn(f: ast::Fn, semantics: &Semantics<'_, impl HirDatabase>) -> Result
         false,
     );
     let params = f.param_list().unwrap();
+
+    // for def in semantics.attr_path_defs(&f) {
+    //     println!("{:#?}", def.name(semantics.db));
+    // }
+
+    if let Some(attr) = f
+        .attrs()
+        .find(|attr| semantics.resolve_attr_atom_name(attr).as_deref() == Some(PROPGEN_INPUT_ATTR))
+    {
+        let tt = attr.meta().unwrap().token_tree().unwrap();
+        let tokens: Vec<_> = tt.token_trees_and_tokens().collect();
+
+        if let &[NodeOrToken::Token(_), NodeOrToken::Token(ident), NodeOrToken::Token(_)] = &tokens.as_slice() {
+            println!("{}", ident);
+        }
+    }
 
     remove_propgen_attr(&f, semantics);
 

@@ -31,7 +31,7 @@ impl<'db, DB: 'db + HirDatabase> SemanticsExt for Semantics<'db, DB> {
     }
 
     fn resolve_attr_def(&self, attr: &ast::Attr) -> Option<ModuleDef> {
-        let path = attr.as_simple_path()?;
+        let path = attr.path()?;
 
         let PathResolution::Def(def) = self.resolve_path(&path)? else {
             return None;
