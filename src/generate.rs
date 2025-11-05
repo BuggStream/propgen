@@ -129,7 +129,7 @@ impl PropgenFileTarget {
 }
 
 fn is_propgen_target(f: &ast::Fn, semantics: &Semantics<'_, impl HirDatabase>) -> bool {
-    let names: Vec<_> = semantics.attr_names(f).collect();
+    let names: Vec<_> = semantics.attr_atom_names(f).collect();
     names.iter().any(|name| name == "test") && names.iter().any(|name| name == PROPGEN_ATTR)
 }
 
@@ -168,7 +168,7 @@ fn rewrite_fn(f: ast::Fn, semantics: &Semantics<'_, impl HirDatabase>) -> Result
 fn remove_propgen_attr(f: &ast::Fn, semantics: &Semantics<'_, impl HirDatabase>) {
     if let Some(attr) = f
         .attrs()
-        .find(|attr| semantics.resolve_attr_name(&attr).as_deref() == Some(PROPGEN_ATTR))
+        .find(|attr| semantics.resolve_attr_atom_name(attr).as_deref() == Some(PROPGEN_ATTR))
     {
         ted::remove(attr.syntax());
     }
