@@ -1,23 +1,15 @@
-use proptest::proptest;
 use hello::double;
-use propgen_macro::propgen;
 
-#[propgen]
+const INPUT: i64 = 1;
+
+#[propgen_macro::propgen]
+#[propgen_macro::propgen_input(INPUT)]
 #[test]
 fn double_twice() {
-    let doubled = double(double(1));
-    assert_eq!(doubled, 4);
+    let doubled = double(double(INPUT));
+    assert_eq!(doubled, 4 * INPUT);
 }
 
-#[propgen]
 fn other_stuff(x: String) -> String {
     format!("... {x}")
 }
-
-proptest! {
-    #[test]
-    fn double_proptest(x in (i64::MIN / 2)..(i64::MAX / 2)) {
-        assert_eq!(double(x), x * 2);
-    }
-}
-

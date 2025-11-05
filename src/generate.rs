@@ -1,3 +1,5 @@
+use crate::ast::IndentAllLines;
+use crate::semantics::SemanticsExt;
 use ra_ap_hir::db::HirDatabase;
 use ra_ap_hir::{Crate, EditionedFileId, Semantics};
 use ra_ap_ide::Edition;
@@ -115,7 +117,7 @@ impl PropgenFileTarget {
                 Item::Module(module) => {
                     item_queue.extend(module.item_list().into_iter().flat_map(|list| list.items()));
                 }
-                Item::Fn(f) if is_propgen_target(&f) => {
+                Item::Fn(f) if is_propgen_target(&f, &crate_target.semantics) => {
                     targets.push(f);
                 }
                 _ => {}
@@ -126,12 +128,13 @@ impl PropgenFileTarget {
     }
 }
 
-fn is_propgen_target(f: &ast::Fn) -> bool {
-    f.has_atom_attr(PROPGEN_ATTR) && f.has_atom_attr("test")
+fn is_propgen_target(f: &ast::Fn, semantics: &Semantics<'_, impl HirDatabase>) -> bool {
+    let names: Vec<_> = semantics.attr_names(f).collect();
+    names.iter().any(|name| name == "test") && names.iter().any(|name| name == PROPGEN_ATTR)
 }
 
-fn rewrite_fn(f: ast::Fn, _semantics: &Semantics<'_, impl HirDatabase>) -> Result<(), PbtError> {
-    let cur_indent = f.indent_level();
+fn rewrite_fn(f: ast::Fn, semantics: &Semantics<'_, impl HirDatabase>) -> Result<(), PbtError> {
+    let target_indent = f.indent_level().add(1);
     let macro_body = token_tree_from_str(
         SyntaxKind::L_PAREN,
         "x in (i64::MIN / 2)..(i64::MAX / 2)",
@@ -139,12 +142,12 @@ fn rewrite_fn(f: ast::Fn, _semantics: &Semantics<'_, impl HirDatabase>) -> Resul
     );
     let params = f.param_list().unwrap();
 
-    remove_propgen_attr(&f);
+    remove_propgen_attr(&f, semantics);
 
     ted::replace(params.syntax(), macro_body.syntax());
 
     let f_tokens = f
-        .indent(cur_indent.add(1))
+        .indent_all_lines(target_indent)
         .syntax()
         .descendants_with_tokens()
         .filter_map(|x| x.into_token());
@@ -152,9 +155,9 @@ fn rewrite_fn(f: ast::Fn, _semantics: &Semantics<'_, impl HirDatabase>) -> Resul
         .into_iter()
         .chain(f_tokens)
         .chain([make::tokens::single_newline()])
-        .map(|token| NodeOrToken::Token(token));
+        .map(NodeOrToken::Token);
     let macro_body = make::token_tree(SyntaxKind::L_CURLY, tokens);
-    let macro_name = make::ext::ident_path("proptest");
+    let macro_name = make::ext::ident_path("proptest::proptest");
     let macro_call = make::expr_macro(macro_name, macro_body.clone()).clone_for_update();
     let proptest_syntax = macro_call.syntax();
 
@@ -162,17 +165,12 @@ fn rewrite_fn(f: ast::Fn, _semantics: &Semantics<'_, impl HirDatabase>) -> Resul
     Ok(())
 }
 
-fn remove_propgen_attr(f: &ast::Fn) {
-    let propgen_attr = f.attrs().find(|attr| {
-        if let Some(meta) = attr.meta() {
-            meta.to_string() == "propgen"
-        } else {
-            false
-        }
-    });
-
-    if let Some(attr) = propgen_attr {
-        ted::remove(attr.syntax())
+fn remove_propgen_attr(f: &ast::Fn, semantics: &Semantics<'_, impl HirDatabase>) {
+    if let Some(attr) = f
+        .attrs()
+        .find(|attr| semantics.resolve_attr_name(&attr).as_deref() == Some(PROPGEN_ATTR))
+    {
+        ted::remove(attr.syntax());
     }
 }
 
