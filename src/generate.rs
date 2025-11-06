@@ -6,7 +6,7 @@ use ra_ap_ide::Edition;
 use ra_ap_ide_db::source_change::{SourceChange, SourceChangeBuilder};
 use ra_ap_syntax::ast::edit::AstNodeEdit;
 use ra_ap_syntax::ast::{HasAttrs, HasModuleItem, Item, make};
-use ra_ap_syntax::{AstNode, NodeOrToken, SourceFile, SyntaxKind, T, ast, ted};
+use ra_ap_syntax::{AstNode, NodeOrToken, SourceFile, SyntaxKind, T, ast, ted, ToSmolStr};
 use ra_ap_vfs::FileId;
 use std::collections::VecDeque;
 use std::ops::Add;
@@ -147,6 +147,16 @@ fn rewrite_fn(f: ast::Fn, semantics: &Semantics<'_, impl HirDatabase>) -> Result
     //     println!("{:#?}", def.name(semantics.db));
     // }
 
+    for x in f.syntax().descendants() {
+        if let Some(path_expr) = ast::PathExpr::cast(x)
+            && let Some(path) = path_expr.path()
+            && let Some(name_ref) = path.as_single_name_ref()
+        {
+            let text = name_ref.text();
+            println!("{}", text.as_str());
+        }
+    }
+
     if let Some(attr) = f
         .attrs()
         .find(|attr| semantics.resolve_attr_atom_name(attr).as_deref() == Some(PROPGEN_INPUT_ATTR))
@@ -155,7 +165,14 @@ fn rewrite_fn(f: ast::Fn, semantics: &Semantics<'_, impl HirDatabase>) -> Result
         let tokens: Vec<_> = tt.token_trees_and_tokens().collect();
 
         if let &[NodeOrToken::Token(_), NodeOrToken::Token(ident), NodeOrToken::Token(_)] = &tokens.as_slice() {
-            println!("{}", ident);
+            let input_identifier = ident.to_smolstr();
+            let name_ref = make::name_ref(input_identifier.as_str());
+            let segment = make::path_segment(name_ref.clone());
+            let path = make::path_from_segments([segment], false);
+            let expr = make::expr_path(path);
+            let list = make::arg_list([expr.clone()]);
+
+            println!("{:#?}", list);
         }
     }
 
