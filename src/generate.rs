@@ -1,12 +1,12 @@
 use crate::ast::IndentAllLines;
 use crate::semantics::SemanticsExt;
 use ra_ap_hir::db::HirDatabase;
-use ra_ap_hir::{Crate, EditionedFileId, Semantics};
+use ra_ap_hir::{Crate, EditionedFileId, ModuleDef, PathResolution, Semantics, Type};
 use ra_ap_ide::Edition;
 use ra_ap_ide_db::source_change::{SourceChange, SourceChangeBuilder};
 use ra_ap_syntax::ast::edit::AstNodeEdit;
 use ra_ap_syntax::ast::{HasAttrs, HasModuleItem, Item, make};
-use ra_ap_syntax::{AstNode, NodeOrToken, SourceFile, SyntaxKind, T, ast, ted, ToSmolStr};
+use ra_ap_syntax::{AstNode, NodeOrToken, SourceFile, SyntaxKind, T, ToSmolStr, ast, ted};
 use ra_ap_vfs::FileId;
 use std::collections::VecDeque;
 use std::ops::Add;
@@ -147,15 +147,15 @@ fn rewrite_fn(f: ast::Fn, semantics: &Semantics<'_, impl HirDatabase>) -> Result
     //     println!("{:#?}", def.name(semantics.db));
     // }
 
-    for x in f.syntax().descendants() {
-        if let Some(path_expr) = ast::PathExpr::cast(x)
-            && let Some(path) = path_expr.path()
-            && let Some(name_ref) = path.as_single_name_ref()
-        {
-            let text = name_ref.text();
-            println!("{}", text.as_str());
-        }
-    }
+    // for x in f.syntax().descendants() {
+    //     if let Some(path_expr) = ast::PathExpr::cast(x)
+    //         && let Some(path) = path_expr.path()
+    //         && let Some(name_ref) = path.as_single_name_ref()
+    //     {
+    //         let option = semantics.resolve_path(&path);
+    //         println!("{:#?}", option);
+    //     }
+    // }
 
     if let Some(attr) = f
         .attrs()
@@ -164,15 +164,26 @@ fn rewrite_fn(f: ast::Fn, semantics: &Semantics<'_, impl HirDatabase>) -> Result
         let tt = attr.meta().unwrap().token_tree().unwrap();
         let tokens: Vec<_> = tt.token_trees_and_tokens().collect();
 
-        if let &[NodeOrToken::Token(_), NodeOrToken::Token(ident), NodeOrToken::Token(_)] = &tokens.as_slice() {
+        if let &[
+            NodeOrToken::Token(_),
+            NodeOrToken::Token(ident),
+            NodeOrToken::Token(_),
+        ] = &tokens.as_slice()
+        {
             let input_identifier = ident.to_smolstr();
-            let name_ref = make::name_ref(input_identifier.as_str());
-            let segment = make::path_segment(name_ref.clone());
-            let path = make::path_from_segments([segment], false);
-            let expr = make::expr_path(path);
-            let list = make::arg_list([expr.clone()]);
 
-            println!("{:#?}", list);
+            let paths: Option<Vec<_>> =
+                find_path_expr(semantics, &f, input_identifier.as_str()).map(|iter| iter.collect());
+
+            println!("{:#?}", paths);
+
+            // let name_ref = make::name_ref(input_identifier.as_str());
+            // let segment = make::path_segment(name_ref.clone());
+            // let path = make::path_from_segments([segment], false);
+            // let expr = make::expr_path(path);
+            // let list = make::arg_list([expr.clone()]);
+            //
+            // println!("{:#?}", list);
         }
     }
 
@@ -227,4 +238,39 @@ fn token_tree_from_str(delimiter: SyntaxKind, text: &str, multiline_block: bool)
     };
 
     mc.token_tree().unwrap().reset_indent()
+}
+
+fn find_path_expr<'db>(
+    semantics: &Semantics<'db, impl HirDatabase + 'db>,
+    f: &ast::Fn,
+    name: &str,
+) -> Option<impl Iterator<Item = (ast::PathExpr, Type<'db>)>> {
+    Some(
+        f.body()?
+            .syntax()
+            .descendants()
+            .filter_map(ast::PathExpr::cast)
+            .filter_map(|path_expr| path_expr.path().map(|path| (path_expr, path)))
+            .filter(move |(_, path)| {
+                path.as_single_name_ref()
+                    .is_some_and(|name_ref| name_ref.text().as_str() == name)
+            })
+            .filter_map(|(path_expr, path)| {
+                dbg!(&path);
+                semantics
+                    .resolve_path(&path)
+                    .and_then(|path_resolution| coerce_path_to_type(semantics, path_resolution))
+                    .map(|ty| (path_expr, ty))
+            }),
+    )
+}
+
+fn coerce_path_to_type<'db>(
+    semantics: &Semantics<'db, impl HirDatabase + 'db>,
+    path_resolution: PathResolution,
+) -> Option<Type<'db>> {
+    match path_resolution {
+        PathResolution::Def(ModuleDef::Const(c)) => Some(c.ty(semantics.db)),
+        _ => None,
+    }
 }
