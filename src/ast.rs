@@ -1,7 +1,7 @@
 use ra_ap_syntax::ast::edit::{AstNodeEdit, IndentLevel};
 use ra_ap_syntax::ast::make;
-use ra_ap_syntax::{ast, syntax_editor, AstToken, NodeOrToken, WalkEvent};
 use ra_ap_syntax::syntax_editor::SyntaxEditor;
+use ra_ap_syntax::{AstToken, NodeOrToken, WalkEvent, ast, syntax_editor};
 
 pub trait IndentAllLines: AstNodeEdit {
     #[must_use]
@@ -14,7 +14,10 @@ pub trait IndentAllLines: AstNodeEdit {
         let mut editor = SyntaxEditor::new(node.clone());
 
         let start_whitespace = make::tokens::whitespace(&format!("{level}"));
-        editor.insert(syntax_editor::Position::before(first_token), start_whitespace);
+        editor.insert(
+            syntax_editor::Position::before(first_token),
+            start_whitespace,
+        );
 
         let tokens = node
             .preorder_with_tokens()

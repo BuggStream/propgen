@@ -1,6 +1,7 @@
+mod analysis;
+mod ast;
 mod generate;
 mod semantics;
-mod ast;
 
 use generate::PropgenCrateTarget;
 use ra_ap_hir::Crate;
@@ -13,6 +14,7 @@ use ra_ap_project_model::{CargoConfig, ProjectManifest, ProjectWorkspace, RustLi
 use ra_ap_vfs::Vfs;
 use std::error::Error;
 use std::path::{Path, PathBuf};
+use thiserror::Error;
 
 pub fn run_propgen(project_path: PathBuf) -> Result<(), Box<dyn Error>> {
     let (project_path, toml_path) = absolute_paths(&project_path)?;
@@ -86,4 +88,24 @@ pub fn propgen_targets<'a>(
         .iter()
         .map(|krate| PropgenCrateTarget::new(Crate::from(*krate), db))
         .collect()
+}
+
+#[derive(Error, Copy, Clone, Debug)]
+pub enum PbtError {
+    #[error("The targeted function does not have a body")]
+    NoFnBody,
+    #[error("The targeted function does not have a valid parameter list")]
+    NoParamList,
+    #[error("No propgen attribute could be found")]
+    MissingPgAttr,
+    #[error("No propgen input attribute could be found")]
+    MissingPgInputAttr,
+    #[error("The propgen input attribute does not have the correct syntax")]
+    InvalidInputAttr,
+    #[error("There are no variables matching the attribute input name")]
+    NoMatchingVariables,
+    #[error("There are multiple distinct variables matching the attribute input name")]
+    IndistinguishableVariables,
+    #[error("The type of the provided input variable is not supported")]
+    UnsupportedInputType,
 }

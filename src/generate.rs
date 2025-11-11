@@ -1,22 +1,17 @@
+use crate::PbtError;
+use crate::analysis::{InputDomain, InputType, find_attr, propgen_input_usages};
 use crate::ast::IndentAllLines;
 use crate::semantics::SemanticsExt;
 use ra_ap_hir::db::HirDatabase;
-use ra_ap_hir::{Crate, EditionedFileId, ModuleDef, PathResolution, Semantics, Type};
+use ra_ap_hir::{Crate, EditionedFileId, Semantics};
 use ra_ap_ide::Edition;
 use ra_ap_ide_db::source_change::{SourceChange, SourceChangeBuilder};
 use ra_ap_syntax::ast::edit::AstNodeEdit;
-use ra_ap_syntax::ast::{HasAttrs, HasModuleItem, Item, make};
-use ra_ap_syntax::{AstNode, NodeOrToken, SourceFile, SyntaxKind, T, ToSmolStr, ast, ted};
+use ra_ap_syntax::ast::{HasModuleItem, Item, make};
+use ra_ap_syntax::{AstNode, NodeOrToken, SourceFile, SyntaxKind, T, ast, ted};
 use ra_ap_vfs::FileId;
 use std::collections::VecDeque;
 use std::ops::Add;
-use thiserror::Error;
-
-#[derive(Error, Copy, Clone, Debug)]
-pub enum PbtError {
-    #[error("The targeted function does not have a body")]
-    NoFnBody,
-}
 
 pub struct PropgenCrateTarget<'db, DB: HirDatabase + 'db> {
     krate: Crate,
@@ -90,8 +85,9 @@ impl PropgenFileTarget {
     ) -> Result<SourceChange, PbtError> {
         let mut builder = SourceChangeBuilder::new(self.file_id);
 
-        for method in self.targeted_methods(&mut builder, crate_target) {
-            rewrite_fn(method, &crate_target.semantics)?;
+        for f in self.targeted_methods(&mut builder, crate_target) {
+            let context = FnGenerationContext::analyze(f, &crate_target.semantics)?;
+            context.generate(crate_target.semantics.db)?;
         }
 
         Ok(builder.finish())
@@ -134,88 +130,86 @@ fn is_propgen_target(f: &ast::Fn, semantics: &Semantics<'_, impl HirDatabase>) -
     names.iter().any(|name| name == "test") && names.iter().any(|name| name == PROPGEN_ATTR)
 }
 
-fn rewrite_fn(f: ast::Fn, semantics: &Semantics<'_, impl HirDatabase>) -> Result<(), PbtError> {
-    let target_indent = f.indent_level().add(1);
-    let macro_body = token_tree_from_str(
-        SyntaxKind::L_PAREN,
-        "x in (i64::MIN / 2)..(i64::MAX / 2)",
-        false,
-    );
-    let params = f.param_list().unwrap();
-
-    // for def in semantics.attr_path_defs(&f) {
-    //     println!("{:#?}", def.name(semantics.db));
-    // }
-
-    // for x in f.syntax().descendants() {
-    //     if let Some(path_expr) = ast::PathExpr::cast(x)
-    //         && let Some(path) = path_expr.path()
-    //         && let Some(name_ref) = path.as_single_name_ref()
-    //     {
-    //         let option = semantics.resolve_path(&path);
-    //         println!("{:#?}", option);
-    //     }
-    // }
-
-    if let Some(attr) = f
-        .attrs()
-        .find(|attr| semantics.resolve_attr_atom_name(attr).as_deref() == Some(PROPGEN_INPUT_ATTR))
-    {
-        let tt = attr.meta().unwrap().token_tree().unwrap();
-        let tokens: Vec<_> = tt.token_trees_and_tokens().collect();
-
-        if let &[
-            NodeOrToken::Token(_),
-            NodeOrToken::Token(ident),
-            NodeOrToken::Token(_),
-        ] = &tokens.as_slice()
-        {
-            let input_identifier = ident.to_smolstr();
-
-            let paths: Option<Vec<_>> =
-                find_path_expr(semantics, &f, input_identifier.as_str()).map(|iter| iter.collect());
-
-            println!("{:#?}", paths);
-
-            // let name_ref = make::name_ref(input_identifier.as_str());
-            // let segment = make::path_segment(name_ref.clone());
-            // let path = make::path_from_segments([segment], false);
-            // let expr = make::expr_path(path);
-            // let list = make::arg_list([expr.clone()]);
-            //
-            // println!("{:#?}", list);
-        }
-    }
-
-    remove_propgen_attr(&f, semantics);
-
-    ted::replace(params.syntax(), macro_body.syntax());
-
-    let f_tokens = f
-        .indent_all_lines(target_indent)
-        .syntax()
-        .descendants_with_tokens()
-        .filter_map(|x| x.into_token());
-    let tokens = [make::tokens::single_newline()]
-        .into_iter()
-        .chain(f_tokens)
-        .chain([make::tokens::single_newline()])
-        .map(NodeOrToken::Token);
-    let macro_body = make::token_tree(SyntaxKind::L_CURLY, tokens);
-    let macro_name = make::ext::ident_path("proptest::proptest");
-    let macro_call = make::expr_macro(macro_name, macro_body.clone()).clone_for_update();
-    let proptest_syntax = macro_call.syntax();
-
-    ted::replace(f.syntax(), proptest_syntax);
-    Ok(())
+#[derive(Debug)]
+pub struct FnGenerationContext<'db> {
+    f: ast::Fn,
+    pg_attr: ast::Attr,
+    input_domain: InputDomain<'db>,
+    input_references: Vec<ast::PathExpr>,
+    param_list: ast::ParamList,
 }
 
-fn remove_propgen_attr(f: &ast::Fn, semantics: &Semantics<'_, impl HirDatabase>) {
-    if let Some(attr) = f
-        .attrs()
-        .find(|attr| semantics.resolve_attr_atom_name(attr).as_deref() == Some(PROPGEN_ATTR))
-    {
-        ted::remove(attr.syntax());
+impl<'db> FnGenerationContext<'db> {
+    pub fn analyze(
+        f: ast::Fn,
+        semantics: &Semantics<'db, impl HirDatabase>,
+    ) -> Result<FnGenerationContext<'db>, PbtError> {
+        let pg_attr = find_attr(&f, semantics, PROPGEN_ATTR).ok_or(PbtError::MissingPgAttr)?;
+        let (input_domain, input_references) = propgen_input_usages(&f, semantics)?;
+        let param_list = f.param_list().ok_or(PbtError::NoParamList)?;
+
+        Ok(FnGenerationContext {
+            f,
+            pg_attr,
+            input_domain,
+            input_references,
+            param_list,
+        })
+    }
+
+    pub fn generate(self, db: &impl HirDatabase) -> Result<(), PbtError> {
+        let target_indent = self.f.indent_level().add(1);
+
+        self.generate_param(db);
+        self.remove_attributes();
+
+        let f_tokens = self
+            .f
+            .indent_all_lines(target_indent)
+            .syntax()
+            .descendants_with_tokens()
+            .filter_map(|x| x.into_token());
+        let tokens = [make::tokens::single_newline()]
+            .into_iter()
+            .chain(f_tokens)
+            .chain([make::tokens::single_newline()])
+            .map(NodeOrToken::Token);
+        let macro_body = make::token_tree(SyntaxKind::L_CURLY, tokens);
+        let macro_name = make::ext::ident_path("proptest");
+        let macro_call = make::expr_macro(macro_name, macro_body.clone()).clone_for_update();
+        let proptest_syntax = macro_call.syntax();
+
+        ted::replace(self.f.syntax(), proptest_syntax);
+        Ok(())
+    }
+
+    fn generate_param(&self, db: &impl HirDatabase) {
+        let type_display = self.input_domain.display_source_code(db);
+        let param_name = self.input_domain.new_distinct_name();
+        let generator_string =
+            default_generator_string(self.input_domain.supported_type(), type_display.as_str());
+
+        let formatted_param = format!("{param_name} in {generator_string}");
+
+        let tt = token_tree_from_str(SyntaxKind::L_PAREN, formatted_param.as_str(), false);
+
+        ted::replace(self.param_list.syntax(), tt.syntax());
+    }
+
+    fn remove_attributes(&self) {
+        ted::remove(self.pg_attr.syntax());
+        ted::remove(self.input_domain.attr().syntax());
+    }
+}
+
+fn default_generator_string(input_type: InputType, type_display: &str) -> String {
+    match input_type {
+        InputType::I64 => {
+            let i64_lower: i64 = i64::MIN / 65536;
+            let i64_upper: i64 = i64::MAX / 65536;
+
+            format!("{i64_lower}..{i64_upper}{type_display}")
+        }
     }
 }
 
@@ -238,39 +232,4 @@ fn token_tree_from_str(delimiter: SyntaxKind, text: &str, multiline_block: bool)
     };
 
     mc.token_tree().unwrap().reset_indent()
-}
-
-fn find_path_expr<'db>(
-    semantics: &Semantics<'db, impl HirDatabase + 'db>,
-    f: &ast::Fn,
-    name: &str,
-) -> Option<impl Iterator<Item = (ast::PathExpr, Type<'db>)>> {
-    Some(
-        f.body()?
-            .syntax()
-            .descendants()
-            .filter_map(ast::PathExpr::cast)
-            .filter_map(|path_expr| path_expr.path().map(|path| (path_expr, path)))
-            .filter(move |(_, path)| {
-                path.as_single_name_ref()
-                    .is_some_and(|name_ref| name_ref.text().as_str() == name)
-            })
-            .filter_map(|(path_expr, path)| {
-                dbg!(&path);
-                semantics
-                    .resolve_path(&path)
-                    .and_then(|path_resolution| coerce_path_to_type(semantics, path_resolution))
-                    .map(|ty| (path_expr, ty))
-            }),
-    )
-}
-
-fn coerce_path_to_type<'db>(
-    semantics: &Semantics<'db, impl HirDatabase + 'db>,
-    path_resolution: PathResolution,
-) -> Option<Type<'db>> {
-    match path_resolution {
-        PathResolution::Def(ModuleDef::Const(c)) => Some(c.ty(semantics.db)),
-        _ => None,
-    }
 }
