@@ -14,3 +14,8 @@ fn double_twice() {
 fn other_stuff(x: String) -> String {
     format!("... {x}")
 }
+
+fn doubled() {
+    let doubled = double(double(INPUT));
+    assert_eq!(doubled, 4 * INPUT);
+}

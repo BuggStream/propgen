@@ -61,14 +61,14 @@ impl<'db> InputDomain<'db> {
 pub fn propgen_input_usages<'db>(
     f: &ast::Fn,
     semantics: &Semantics<'db, impl HirDatabase>,
-) -> Result<(InputDomain<'db>, Vec<ast::PathExpr>), PbtError> {
+) -> Result<(InputDomain<'db>, Vec<ast::Path>), PbtError> {
     let (attr_name, attr) = find_propgen_input_name(f, semantics)?;
-    let (resolved_type, path_exprs) = find_variable_usages(semantics, f, attr_name.as_str())?;
+    let (resolved_type, paths) = find_variable_usages(semantics, f, attr_name.as_str())?;
     let input_type = resolved_type.supported_type()?;
 
     Ok((
         InputDomain::new(attr, attr_name, input_type, resolved_type),
-        path_exprs,
+        paths,
     ))
 }
 
@@ -112,7 +112,7 @@ pub fn find_variable_usages<'db>(
     semantics: &Semantics<'db, impl HirDatabase + 'db>,
     f: &ast::Fn,
     name: &str,
-) -> Result<(ResolvedType<'db>, Vec<ast::PathExpr>), PbtError> {
+) -> Result<(ResolvedType<'db>, Vec<ast::Path>), PbtError> {
     let path_expr_iter = f
         .body()
         .ok_or(PbtError::NoFnBody)?
@@ -121,25 +121,23 @@ pub fn find_variable_usages<'db>(
         .filter_map(ast::PathExpr::cast);
 
     let mut groups = path_expr_iter
-        .filter_map(|path_expr| path_expr.path().map(|path| (path_expr, path)))
-        .filter(|(_, path)| path_name_eq(path, name))
-        .filter_map(|(path_expr, path)| {
-            resolve_path_type(semantics, &path).map(|resolved| (path_expr, resolved))
-        })
+        .filter_map(|path_expr| path_expr.path())
+        .filter(|path| path_name_eq(path, name))
+        .filter_map(|path| resolve_path_type(semantics, &path).map(|resolved| (path, resolved)))
         .into_grouping_map_by(|(_, resolved)| resolved.clone())
-        .fold(Vec::new(), |mut acc, _key, (path_expr, _)| {
-            acc.push(path_expr);
+        .fold(Vec::new(), |mut acc, _key, (path, _)| {
+            acc.push(path);
             acc
         })
         .into_iter();
 
-    let (resolved, path_exprs) = groups.next().ok_or(PbtError::NoMatchingVariables)?;
+    let (resolved, paths) = groups.next().ok_or(PbtError::NoMatchingVariables)?;
 
     if groups.next().is_some() {
         return Err(PbtError::IndistinguishableVariables);
     }
 
-    Ok((resolved, path_exprs))
+    Ok((resolved, paths))
 }
 
 fn path_name_eq(path: &ast::Path, name: &str) -> bool {

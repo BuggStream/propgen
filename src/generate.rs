@@ -135,7 +135,7 @@ pub struct FnGenerationContext<'db> {
     f: ast::Fn,
     pg_attr: ast::Attr,
     input_domain: InputDomain<'db>,
-    input_references: Vec<ast::PathExpr>,
+    input_references: Vec<ast::Path>,
     param_list: ast::ParamList,
 }
 
@@ -158,11 +158,28 @@ impl<'db> FnGenerationContext<'db> {
     }
 
     pub fn generate(self, db: &impl HirDatabase) -> Result<(), PbtError> {
-        let target_indent = self.f.indent_level().add(1);
-
         self.generate_param(db);
+        self.replace_input_references();
         self.remove_attributes();
+        self.generate_propgen_macro();
 
+        Ok(())
+    }
+
+    fn replace_input_references(&self) {
+        let name_ref = make::name_ref(self.input_domain.new_distinct_name().as_str());
+        let path = make::path_from_segments([make::path_segment(name_ref)], false);
+
+        println!("{:#?}", self.f.syntax());
+
+        for input_reference in &self.input_references {
+            println!("{:#?}", input_reference.syntax());
+            ted::replace(input_reference.syntax(), path.clone_for_update().syntax());
+        }
+    }
+
+    fn generate_propgen_macro(&self) {
+        let target_indent = self.f.indent_level().add(1);
         let f_tokens = self
             .f
             .indent_all_lines(target_indent)
@@ -180,7 +197,6 @@ impl<'db> FnGenerationContext<'db> {
         let proptest_syntax = macro_call.syntax();
 
         ted::replace(self.f.syntax(), proptest_syntax);
-        Ok(())
     }
 
     fn generate_param(&self, db: &impl HirDatabase) {
