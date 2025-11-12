@@ -170,7 +170,7 @@ fn resolve_path_type<'db>(
     path: &ast::Path,
 ) -> Option<ResolvedType<'db>> {
     let path_resolution = semantics.resolve_path(path)?;
-    Some(coerce_path_to_type(semantics, path_resolution)?)
+    coerce_path_to_type(semantics, path_resolution)
 }
 
 fn coerce_path_to_type<'db>(
@@ -210,11 +210,11 @@ pub enum InputType {
     I64,
 }
 
-const BUILTIN_I64: LazyLock<BuiltinType> = LazyLock::new(|| {
+static BUILTIN_I64: LazyLock<BuiltinType> = LazyLock::new(|| {
     ra_ap_hir_def::builtin_type::BuiltinType::by_name(&Name::new_root("i64"))
         .unwrap()
         .into()
 });
 
-const SUPPORTED_TYPES: LazyLock<HashMap<BuiltinType, InputType>> =
+static SUPPORTED_TYPES: LazyLock<HashMap<BuiltinType, InputType>> =
     LazyLock::new(|| HashMap::from([(*BUILTIN_I64, InputType::I64)]));
