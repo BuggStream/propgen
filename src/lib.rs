@@ -16,7 +16,7 @@ use std::error::Error;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
-pub fn run_propgen(project_path: PathBuf) -> Result<(), Box<dyn Error>> {
+pub fn run_propgen(project_path: PathBuf) -> Result<Vec<(PathBuf, String)>, Box<dyn Error>> {
     let (project_path, toml_path) = absolute_paths(&project_path)?;
 
     let cargo_config = CargoConfig {
@@ -48,19 +48,26 @@ pub fn run_propgen(project_path: PathBuf) -> Result<(), Box<dyn Error>> {
 
     let crate_targets = propgen_targets(&db, &vfs, &toml_path);
 
+    let mut changes = Vec::new();
+
     for crate_target in crate_targets {
         let source_change = crate_target.generate_pbt()?;
 
         for (file_id, (change, _)) in source_change.source_file_edits.iter() {
-            let x = vfs.file_path(*file_id);
-            println!("File: {:?}", x.name_and_extension());
+            let path = vfs
+                .file_path(*file_id)
+                .as_path()
+                .map(|abs_path| PathBuf::from(abs_path.to_path_buf()))
+                .ok_or(PbtError::VirtualFileUpdate)?;
+
             let mut file_text = db.file_text(*file_id).text(&db).to_string();
             change.apply(&mut file_text);
-            println!("Updated file:\n{}", file_text);
+
+            changes.push((path, file_text));
         }
     }
 
-    Ok(())
+    Ok(changes)
 }
 
 fn absolute_paths(project_path: &Path) -> std::io::Result<(PathBuf, PathBuf)> {
@@ -108,4 +115,6 @@ pub enum PbtError {
     IndistinguishableVariables,
     #[error("The type of the provided input variable is not supported")]
     UnsupportedInputType,
+    #[error("Cannot write propgen changes to a virtual file")]
+    VirtualFileUpdate,
 }
