@@ -7,7 +7,7 @@ use ra_ap_hir::{
     BuiltinType, HirDisplay, Module, ModuleDef, Name, PathResolution, Semantics, Type,
 };
 use ra_ap_syntax::ast::HasAttrs;
-use ra_ap_syntax::{AstNode, NodeOrToken, SmolStr, ToSmolStr, ast};
+use ra_ap_syntax::{AstNode, AstToken, NodeOrToken, SmolStr, ToSmolStr, ast};
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
@@ -58,10 +58,16 @@ impl<'db> InputDomain<'db> {
     }
 }
 
+#[derive(Debug, Clone)]
+pub enum InputUsage {
+    Path(ast::Path),
+    Macro(ast::MacroCall, ast::Ident),
+}
+
 pub fn propgen_input_usages<'db>(
     f: &ast::Fn,
     semantics: &Semantics<'db, impl HirDatabase>,
-) -> Result<(InputDomain<'db>, Vec<ast::Path>), PbtError> {
+) -> Result<(InputDomain<'db>, Vec<InputUsage>), PbtError> {
     let (attr_name, attr) = find_propgen_input_name(f, semantics)?;
     let (resolved_type, paths) = find_variable_usages(semantics, f, attr_name.as_str())?;
     let input_type = resolved_type.supported_type()?;
@@ -112,13 +118,10 @@ pub fn find_variable_usages<'db>(
     semantics: &Semantics<'db, impl HirDatabase + 'db>,
     f: &ast::Fn,
     name: &str,
-) -> Result<(ResolvedType<'db>, Vec<ast::Path>), PbtError> {
-    let path_expr_iter = f
-        .body()
-        .ok_or(PbtError::NoFnBody)?
-        .syntax()
-        .descendants()
-        .filter_map(ast::PathExpr::cast);
+) -> Result<(ResolvedType<'db>, Vec<InputUsage>), PbtError> {
+    let body = f.body().ok_or(PbtError::NoFnBody)?;
+
+    let path_expr_iter = body.syntax().descendants().filter_map(ast::PathExpr::cast);
 
     let mut groups = path_expr_iter
         .filter_map(|path_expr| path_expr.path())
@@ -126,18 +129,35 @@ pub fn find_variable_usages<'db>(
         .filter_map(|path| resolve_path_type(semantics, &path).map(|resolved| (path, resolved)))
         .into_grouping_map_by(|(_, resolved)| resolved.clone())
         .fold(Vec::new(), |mut acc, _key, (path, _)| {
-            acc.push(path);
+            acc.push(InputUsage::Path(path));
             acc
         })
         .into_iter();
 
-    let (resolved, paths) = groups.next().ok_or(PbtError::NoMatchingVariables)?;
+    let (resolved, mut usages) = groups.next().ok_or(PbtError::NoMatchingVariables)?;
 
     if groups.next().is_some() {
         return Err(PbtError::IndistinguishableVariables);
     }
 
-    Ok((resolved, paths))
+    let macro_usages = body
+        .syntax()
+        .descendants()
+        .filter_map(ast::MacroCall::cast)
+        .filter_map(|call| call.token_tree().map(|tt| (call, tt)))
+        .flat_map(|(call, tt)| {
+            tt.token_trees_and_tokens()
+                .filter_map(|node_or_token| match node_or_token {
+                    NodeOrToken::Node(_) => panic!("Nested token trees are not supported"),
+                    NodeOrToken::Token(token) => ast::Ident::cast(token),
+                })
+                .filter(|ident| ident.text() == name)
+                .map(|ident| InputUsage::Macro(call.clone(), ident))
+                .collect::<Vec<_>>()
+        });
+    usages.extend(macro_usages);
+
+    Ok((resolved, usages))
 }
 
 fn path_name_eq(path: &ast::Path, name: &str) -> bool {

@@ -1,5 +1,5 @@
 use crate::PbtError;
-use crate::analysis::{InputDomain, InputType, find_attr, propgen_input_usages};
+use crate::analysis::{InputDomain, InputType, InputUsage, find_attr, propgen_input_usages};
 use crate::ast::IndentAllLines;
 use crate::semantics::SemanticsExt;
 use ra_ap_hir::db::HirDatabase;
@@ -8,7 +8,7 @@ use ra_ap_ide::Edition;
 use ra_ap_ide_db::source_change::{SourceChange, SourceChangeBuilder};
 use ra_ap_syntax::ast::edit::AstNodeEdit;
 use ra_ap_syntax::ast::{HasModuleItem, Item, make};
-use ra_ap_syntax::{AstNode, NodeOrToken, SourceFile, SyntaxKind, T, ast, ted};
+use ra_ap_syntax::{AstNode, AstToken, NodeOrToken, SourceFile, SyntaxKind, T, ast, ted};
 use ra_ap_vfs::FileId;
 use std::collections::VecDeque;
 use std::ops::Add;
@@ -135,7 +135,7 @@ pub struct FnGenerationContext<'db> {
     f: ast::Fn,
     pg_attr: ast::Attr,
     input_domain: InputDomain<'db>,
-    input_references: Vec<ast::Path>,
+    input_references: Vec<InputUsage>,
     param_list: ast::ParamList,
 }
 
@@ -167,14 +167,49 @@ impl<'db> FnGenerationContext<'db> {
     }
 
     fn replace_input_references(&self) {
-        let name_ref = make::name_ref(self.input_domain.new_distinct_name().as_str());
+        let new_name = self.input_domain.new_distinct_name();
+        let new_ident = make::tokens::ident(new_name.as_str());
+        let name_ref = make::name_ref(new_name.as_str());
         let path = make::path_from_segments([make::path_segment(name_ref)], false);
 
-        println!("{:#?}", self.f.syntax());
+        for input_usage in &self.input_references {
+            match input_usage {
+                InputUsage::Path(path_usage) => {
+                    ted::replace(path_usage.syntax(), path.clone_for_update().syntax());
+                }
+                InputUsage::Macro(call, ident_usage) => {
+                    let original_tt = call.token_tree().unwrap();
 
-        for input_reference in &self.input_references {
-            println!("{:#?}", input_reference.syntax());
-            ted::replace(input_reference.syntax(), path.clone_for_update().syntax());
+                    let tokens: Vec<_> = original_tt
+                        .token_trees_and_tokens()
+                        .map(|node_or_token| match node_or_token {
+                            NodeOrToken::Node(tt) => NodeOrToken::Node(tt),
+                            NodeOrToken::Token(token) => {
+                                if let Some(ident) = ast::Ident::cast(token.clone())
+                                    && ident == *ident_usage
+                                {
+                                    NodeOrToken::Token(new_ident.clone())
+                                } else {
+                                    NodeOrToken::Token(token)
+                                }
+                            }
+                        })
+                        .collect();
+
+                    let &[
+                        NodeOrToken::Token(first_token),
+                        tokens @ ..,
+                        NodeOrToken::Token(_),
+                    ] = &tokens.as_slice()
+                    else {
+                        panic!("Invalid token tree!");
+                    };
+
+                    let new_tt = make::token_tree(first_token.kind(), tokens.iter().cloned());
+
+                    ted::replace(original_tt.syntax(), new_tt.clone_for_update().syntax());
+                }
+            }
         }
     }
 
