@@ -1,17 +1,18 @@
 use crate::PbtError;
-use crate::analysis::{InputDomain, InputType, InputUsage, find_attr, propgen_input_usages};
+use crate::analysis::{InputDomain, InputType, InputUsage, find_attr, propgen_input_usages, TtIterator};
 use crate::ast::IndentAllLines;
 use crate::semantics::SemanticsExt;
 use ra_ap_hir::db::HirDatabase;
 use ra_ap_hir::{Crate, EditionedFileId, Semantics};
 use ra_ap_ide::Edition;
-use ra_ap_ide_db::source_change::{SourceChange, SourceChangeBuilder};
+use ra_ap_ide_db::source_change::{SourceChange, SourceChangeBuilder, TreeMutator};
 use ra_ap_syntax::ast::edit::AstNodeEdit;
 use ra_ap_syntax::ast::{HasModuleItem, Item, make};
 use ra_ap_syntax::{AstNode, AstToken, NodeOrToken, SourceFile, SyntaxKind, T, ast, ted};
 use ra_ap_vfs::FileId;
 use std::collections::VecDeque;
 use std::ops::Add;
+use ra_ap_syntax::ted::Element;
 
 pub struct PropgenCrateTarget<'db, DB: HirDatabase + 'db> {
     krate: Crate,
@@ -168,7 +169,7 @@ impl<'db> FnGenerationContext<'db> {
 
     fn replace_input_references(&self) {
         let new_name = self.input_domain.new_distinct_name();
-        let new_ident = make::tokens::ident(new_name.as_str());
+        let new_ident = ast::Ident::cast(make::tokens::ident(new_name.as_str())).unwrap();
         let name_ref = make::name_ref(new_name.as_str());
         let path = make::path_from_segments([make::path_segment(name_ref)], false);
 
@@ -178,36 +179,43 @@ impl<'db> FnGenerationContext<'db> {
                     ted::replace(path_usage.syntax(), path.clone_for_update().syntax());
                 }
                 InputUsage::Macro(call, ident_usage) => {
-                    let original_tt = call.token_tree().unwrap();
+                    ted::replace(ident_usage.syntax(), new_ident.syntax());
+                    //
+                    //
+                    // let original_tt = call.token_tree().unwrap();
+                    // let tokens: Vec<_> = original_tt.token_trees_and_tokens().collect();
+                    //
+                    // let &[
+                    //     NodeOrToken::Token(first_token),
+                    //     token_slice @ ..,
+                    //     NodeOrToken::Token(_),
+                    // ] = &tokens.as_slice()
+                    // else {
+                    //     panic!("Invalid token tree!");
+                    // };
+                    //
+                    // let idents = token_slice
+                    //     .into_iter()
+                    //     .cloned()
+                    //     .flatten_tt()
+                    //     .flat_map(ast::Ident::cast)
+                    //     ;
+                    //
+                    // for ident in idents {
+                    //
+                    //
+                    //     ted::replace(token.syntax(), new_tt.clone_for_update().syntax());
+                    // }
+                    //
+                    // let tokens: Vec<_> = token_slice
+                    //     .into_iter()
+                    //     .cloned()
+                    //     .flatten_tt()
+                    //     .flat_map(ast::Ident::cast)
+                    //     .map(|x| x.syntax());
+                    //
+                    // let new_tt = make::token_tree(first_token.kind(), tokens.iter().cloned());
 
-                    let tokens: Vec<_> = original_tt
-                        .token_trees_and_tokens()
-                        .map(|node_or_token| match node_or_token {
-                            NodeOrToken::Node(tt) => NodeOrToken::Node(tt),
-                            NodeOrToken::Token(token) => {
-                                if let Some(ident) = ast::Ident::cast(token.clone())
-                                    && ident == *ident_usage
-                                {
-                                    NodeOrToken::Token(new_ident.clone())
-                                } else {
-                                    NodeOrToken::Token(token)
-                                }
-                            }
-                        })
-                        .collect();
-
-                    let &[
-                        NodeOrToken::Token(first_token),
-                        tokens @ ..,
-                        NodeOrToken::Token(_),
-                    ] = &tokens.as_slice()
-                    else {
-                        panic!("Invalid token tree!");
-                    };
-
-                    let new_tt = make::token_tree(first_token.kind(), tokens.iter().cloned());
-
-                    ted::replace(original_tt.syntax(), new_tt.clone_for_update().syntax());
                 }
             }
         }

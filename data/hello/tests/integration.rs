@@ -8,7 +8,8 @@ const INPUT: i64 = 1;
 #[test]
 fn double_twice() {
     let doubled = double(double(INPUT));
-    assert_eq!(doubled, 4 * INPUT);
+    println!("{}", doubled);
+    assert_eq!(double(double(INPUT)), 4 * INPUT);
 }
 
 fn other_stuff(x: String) -> String {

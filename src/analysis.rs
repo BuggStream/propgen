@@ -1,3 +1,7 @@
+mod token_tree;
+
+pub use token_tree::*;
+
 use crate::PbtError;
 use crate::generate::PROPGEN_INPUT_ATTR;
 use crate::semantics::SemanticsExt;
@@ -146,11 +150,14 @@ pub fn find_variable_usages<'db>(
         .filter_map(ast::MacroCall::cast)
         .filter_map(|call| call.token_tree().map(|tt| (call, tt)))
         .flat_map(|(call, tt)| {
+            println!("{:#?}", tt);
             tt.token_trees_and_tokens()
-                .filter_map(|node_or_token| match node_or_token {
-                    NodeOrToken::Node(_) => panic!("Nested token trees are not supported"),
-                    NodeOrToken::Token(token) => ast::Ident::cast(token),
+                .flatten_tt()
+                .map(|x| {
+                    println!("{:#?}", x);
+                    x
                 })
+                .flat_map(ast::Ident::cast)
                 .filter(|ident| ident.text() == name)
                 .map(|ident| InputUsage::Macro(call.clone(), ident))
                 .collect::<Vec<_>>()
