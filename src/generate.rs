@@ -1,16 +1,16 @@
 use crate::PbtError;
 use crate::analysis::{
-    InputDomain, InputType, InputUsage, TtIterator, find_attr, propgen_input_usages,
+    InputDomain, InputType, InputUsage, find_attr, propgen_input_usages,
 };
 use crate::ast::IndentAllLines;
 use crate::semantics::SemanticsExt;
 use ra_ap_hir::db::HirDatabase;
 use ra_ap_hir::{Crate, EditionedFileId, Semantics};
 use ra_ap_ide::Edition;
-use ra_ap_ide_db::source_change::{SourceChange, SourceChangeBuilder, TreeMutator};
+use ra_ap_ide_db::source_change::{SourceChange, SourceChangeBuilder};
 use ra_ap_syntax::ast::edit::AstNodeEdit;
 use ra_ap_syntax::ast::{HasModuleItem, Item, make};
-use ra_ap_syntax::ted::Element;
+use ra_ap_syntax::syntax_editor::SyntaxEditor;
 use ra_ap_syntax::{AstNode, AstToken, NodeOrToken, SourceFile, SyntaxKind, T, ast, ted};
 use ra_ap_vfs::FileId;
 use std::collections::VecDeque;
@@ -89,8 +89,14 @@ impl PropgenFileTarget {
         let mut builder = SourceChangeBuilder::new(self.file_id);
 
         for f in self.targeted_methods(&mut builder, crate_target) {
+            let mut editor = builder.make_editor(f.syntax());
+
             let context = FnGenerationContext::analyze(f, &crate_target.semantics)?;
-            context.generate(crate_target.semantics.db)?;
+            context.generate(crate_target.semantics.db, &mut editor)?;
+
+            dbg!("what");
+
+            builder.add_file_edits(self.file_id, editor);
         }
 
         Ok(builder.finish())
@@ -109,7 +115,7 @@ impl PropgenFileTarget {
             self.krate.base(),
         );
         let source_file = crate_target.semantics.parse(editioned_file);
-        let source_file = builder.make_mut(source_file);
+        // let source_file = builder.make_mut(source_file);
 
         let mut item_queue = VecDeque::from_iter(source_file.items());
 
@@ -161,16 +167,20 @@ impl<'db> FnGenerationContext<'db> {
         })
     }
 
-    pub fn generate(self, db: &impl HirDatabase) -> Result<(), PbtError> {
-        self.generate_param(db);
-        self.replace_input_references();
-        self.remove_attributes();
-        self.generate_propgen_macro();
+    pub fn generate(
+        self,
+        db: &impl HirDatabase,
+        editor: &mut SyntaxEditor,
+    ) -> Result<(), PbtError> {
+        self.generate_param(db, editor);
+        self.replace_input_references(editor);
+        self.remove_attributes(editor);
+        self.generate_propgen_macro(editor);
 
         Ok(())
     }
 
-    fn replace_input_references(&self) {
+    fn replace_input_references(&self, editor: &mut SyntaxEditor) {
         let new_name = self.input_domain.new_distinct_name();
         let new_ident = ast::Ident::cast(make::tokens::ident(new_name.as_str())).unwrap();
         let name_ref = make::name_ref(new_name.as_str());
@@ -179,7 +189,7 @@ impl<'db> FnGenerationContext<'db> {
         for input_usage in &self.input_references {
             match input_usage {
                 InputUsage::Path(path_usage) => {
-                    ted::replace(path_usage.syntax(), path.clone_for_update().syntax());
+                    editor.replace(path_usage.syntax(), path.clone_for_update().syntax());
                 }
                 InputUsage::Macro(call, ident_usage) => {
                     // ted::replace(ident_usage.syntax(), new_ident.syntax());
@@ -223,7 +233,7 @@ impl<'db> FnGenerationContext<'db> {
         }
     }
 
-    fn generate_propgen_macro(&self) {
+    fn generate_propgen_macro(&self, editor: &mut SyntaxEditor) {
         let target_indent = self.f.indent_level().add(1);
         let f_tokens = self
             .f
@@ -241,10 +251,10 @@ impl<'db> FnGenerationContext<'db> {
         let macro_call = make::expr_macro(macro_name, macro_body.clone()).clone_for_update();
         let proptest_syntax = macro_call.syntax();
 
-        ted::replace(self.f.syntax(), proptest_syntax);
+        editor.replace(self.f.syntax(), proptest_syntax);
     }
 
-    fn generate_param(&self, db: &impl HirDatabase) {
+    fn generate_param(&self, db: &impl HirDatabase, editor: &mut SyntaxEditor) {
         let type_display = self.input_domain.display_source_code(db);
         let param_name = self.input_domain.new_distinct_name();
         let generator_string =
@@ -254,12 +264,12 @@ impl<'db> FnGenerationContext<'db> {
 
         let tt = token_tree_from_str(SyntaxKind::L_PAREN, formatted_param.as_str(), false);
 
-        ted::replace(self.param_list.syntax(), tt.syntax());
+        editor.replace(self.param_list.syntax(), tt.syntax());
     }
 
-    fn remove_attributes(&self) {
-        ted::remove(self.pg_attr.syntax());
-        ted::remove(self.input_domain.attr().syntax());
+    fn remove_attributes(&self, editor: &mut SyntaxEditor) {
+        editor.delete(self.pg_attr.syntax());
+        editor.delete(self.input_domain.attr().syntax());
     }
 }
 
