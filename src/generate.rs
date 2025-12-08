@@ -1,5 +1,7 @@
 use crate::PbtError;
-use crate::analysis::{InputDomain, InputType, InputUsage, find_attr, propgen_input_usages, TtIterator};
+use crate::analysis::{
+    InputDomain, InputType, InputUsage, TtIterator, find_attr, propgen_input_usages,
+};
 use crate::ast::IndentAllLines;
 use crate::semantics::SemanticsExt;
 use ra_ap_hir::db::HirDatabase;
@@ -8,11 +10,11 @@ use ra_ap_ide::Edition;
 use ra_ap_ide_db::source_change::{SourceChange, SourceChangeBuilder, TreeMutator};
 use ra_ap_syntax::ast::edit::AstNodeEdit;
 use ra_ap_syntax::ast::{HasModuleItem, Item, make};
+use ra_ap_syntax::ted::Element;
 use ra_ap_syntax::{AstNode, AstToken, NodeOrToken, SourceFile, SyntaxKind, T, ast, ted};
 use ra_ap_vfs::FileId;
 use std::collections::VecDeque;
 use std::ops::Add;
-use ra_ap_syntax::ted::Element;
 
 pub struct PropgenCrateTarget<'db, DB: HirDatabase + 'db> {
     krate: Crate,
@@ -47,7 +49,7 @@ impl<'db, DB: HirDatabase + 'db> PropgenCrateTarget<'db, DB> {
     }
 
     fn file_targets(&self, db: &impl HirDatabase) -> Vec<PropgenFileTarget> {
-        let root_module = self.krate.root_module();
+        let root_module = self.krate.root_module(db);
 
         let mut files = Vec::new();
         let mut stack = VecDeque::new();
@@ -104,6 +106,7 @@ impl PropgenFileTarget {
             crate_target.db(),
             self.file_id,
             self.krate.edition(crate_target.db()),
+            self.krate.base(),
         );
         let source_file = crate_target.semantics.parse(editioned_file);
         let source_file = builder.make_mut(source_file);
@@ -179,7 +182,7 @@ impl<'db> FnGenerationContext<'db> {
                     ted::replace(path_usage.syntax(), path.clone_for_update().syntax());
                 }
                 InputUsage::Macro(call, ident_usage) => {
-                    ted::replace(ident_usage.syntax(), new_ident.syntax());
+                    // ted::replace(ident_usage.syntax(), new_ident.syntax());
                     //
                     //
                     // let original_tt = call.token_tree().unwrap();
@@ -215,7 +218,6 @@ impl<'db> FnGenerationContext<'db> {
                     //     .map(|x| x.syntax());
                     //
                     // let new_tt = make::token_tree(first_token.kind(), tokens.iter().cloned());
-
                 }
             }
         }

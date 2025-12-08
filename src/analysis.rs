@@ -8,7 +8,7 @@ use crate::semantics::SemanticsExt;
 use itertools::Itertools;
 use ra_ap_hir::db::HirDatabase;
 use ra_ap_hir::{
-    BuiltinType, HirDisplay, Module, ModuleDef, Name, PathResolution, Semantics, Type,
+    BuiltinType, HirDisplay, Module, ModuleDef, Name, PathResolution, Semantics, Type, attach_db,
 };
 use ra_ap_syntax::ast::HasAttrs;
 use ra_ap_syntax::{AstNode, AstToken, NodeOrToken, SmolStr, ToSmolStr, ast};
@@ -55,10 +55,12 @@ impl<'db> InputDomain<'db> {
     }
 
     pub fn display_source_code(&self, db: &impl HirDatabase) -> String {
-        self.resolved_ty
-            .ty
-            .display_source_code(db, self.resolved_ty.module.into(), false)
-            .unwrap()
+        attach_db(db, || {
+            self.resolved_ty
+                .ty
+                .display_source_code(db, self.resolved_ty.module.into(), false)
+                .unwrap()
+        })
     }
 }
 
@@ -74,7 +76,7 @@ pub fn propgen_input_usages<'db>(
 ) -> Result<(InputDomain<'db>, Vec<InputUsage>), PbtError> {
     let (attr_name, attr) = find_propgen_input_name(f, semantics)?;
     let (resolved_type, paths) = find_variable_usages(semantics, f, attr_name.as_str())?;
-    let input_type = resolved_type.supported_type()?;
+    let input_type = resolved_type.supported_type(semantics)?;
 
     Ok((
         InputDomain::new(attr, attr_name, input_type, resolved_type),
@@ -185,10 +187,12 @@ fn coerce_path_to_type<'db>(
     path_resolution: PathResolution,
 ) -> Option<ResolvedType<'db>> {
     match path_resolution {
-        PathResolution::Def(ModuleDef::Const(c)) => Some(ResolvedType::new(
-            c.ty(semantics.db),
-            c.module(semantics.db),
-        )),
+        PathResolution::Def(ModuleDef::Const(c)) => attach_db(semantics.db, || {
+            Some(ResolvedType::new(
+                c.ty(semantics.db),
+                c.module(semantics.db),
+            ))
+        }),
         _ => None,
     }
 }
@@ -204,11 +208,16 @@ impl<'db> ResolvedType<'db> {
         ResolvedType { ty, module }
     }
 
-    pub fn supported_type(&self) -> Result<InputType, PbtError> {
-        self.ty
-            .as_builtin()
-            .and_then(|builtin_ty| SUPPORTED_TYPES.get(&builtin_ty).copied())
-            .ok_or(PbtError::UnsupportedInputType)
+    pub fn supported_type(
+        &self,
+        semantics: &Semantics<'db, impl HirDatabase>,
+    ) -> Result<InputType, PbtError> {
+        attach_db(semantics.db, || {
+            self.ty
+                .as_builtin()
+                .and_then(|builtin_ty| SUPPORTED_TYPES.get(&builtin_ty).copied())
+                .ok_or(PbtError::UnsupportedInputType)
+        })
     }
 }
 
